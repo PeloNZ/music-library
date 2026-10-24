@@ -1,7 +1,15 @@
 from datetime import datetime
 from pathlib import Path
 
-from musicos.ingest import dry_run_command, import_command, make_batch_id
+import json
+
+from musicos.ingest import (
+    dry_run_command,
+    import_command,
+    make_batch_id,
+    summarize_batch,
+)
+from musicos.runner import Output
 
 WHEN = datetime(2026, 10, 24, 21, 40)
 
@@ -55,3 +63,36 @@ def test_unattended_import_skips_what_it_cannot_match() -> None:
     assert cmd[-1] == str(SOURCE)
     assert "-l" in cmd
     assert f"musicos_batch={BATCH}" in cmd
+
+
+def album(name: str, mb_albumid: str) -> dict[str, object]:
+    return {
+        "id": 1,
+        "album": name,
+        "albumartist": "Gatecreeper",
+        "year": 2019,
+        "mb_albumid": mb_albumid,
+    }
+
+
+def test_summary_flags_albums_with_no_musicbrainz_id() -> None:
+    exported = json.dumps([album("Deserted", "abc-123"), album("Unknown", "")])
+    seen: list[list[str]] = []
+
+    def run(cmd: list[str]) -> Output:
+        seen.append(cmd)
+        return Output(exported, "", 0)
+
+    summary = summarize_batch(run, BATCH)
+
+    assert summary.albums == 2
+    assert [a["album"] for a in summary.flagged] == ["Unknown"]
+    assert seen[0][:4] == ["beet", "export", "-a", "-f"]
+    assert seen[0][-1] == f"musicos_batch:{BATCH}"
+
+
+def test_summary_of_an_empty_batch() -> None:
+    summary = summarize_batch(lambda cmd: Output("", "", 0), BATCH)
+
+    assert summary.albums == 0
+    assert summary.flagged == []
