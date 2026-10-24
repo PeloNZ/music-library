@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from musicos.runner import Output, Run
 
 AUDIO_TRACK = re.compile(r"^\s*TRACK\s+\d+\s+AUDIO\b", re.IGNORECASE | re.MULTILINE)
 
@@ -59,3 +63,66 @@ def scan(root: Path) -> Scan:
         else:
             ambiguous.append(folder)
     return Scan(rips, ambiguous)
+
+
+class SplitError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class SplitResult:
+    tracks: list[Path]
+    track_count: int
+    holding: Path
+
+
+def _check(out: Output, tool: str) -> Output:
+    if out.code != 0:
+        message = out.stderr.strip().splitlines()[:1] or [f"{tool} failed"]
+        raise SplitError(message[0])
+    return out
+
+
+def split_rip(rip: Rip, inbox: Path, holding: Path, run: Run) -> SplitResult:
+    """Split one rip into the inbox and move the source folder to holding.
+
+    The tracks are made in a staging folder first. Any failure, or a track
+    count that differs from the cue sheet, removes the staging folder and
+    leaves the source as it was. Nothing in the source is deleted, and an
+    existing album is never overwritten.
+    """
+    count = cue_track_count(read_cue(rip.cue))
+    if count == 0:
+        raise SplitError(f"{rip.cue.name} lists no audio tracks")
+    album = inbox / rip.folder.name
+    held = holding / rip.folder.name
+    staging = inbox / f".split-{rip.folder.name}"
+    for path in (album, held, staging):
+        if path.exists():
+            raise SplitError(f"{path} already exists")
+
+    staging.mkdir(parents=True)
+    try:
+        points = _check(run(["cuebreakpoints", str(rip.cue)]), "cuebreakpoints")
+        with tempfile.TemporaryDirectory() as tmp:
+            points_file = Path(tmp) / "points.txt"
+            points_file.write_text(points.stdout)
+            _check(
+                run(
+                    ["shnsplit", "-f", str(points_file), "-q", "-o", "flac"]
+                    + ["-d", str(staging), str(rip.flac)]
+                ),
+                "shnsplit",
+            )
+        made = sorted(staging.glob("split-track*.flac"))
+        if len(made) != count:
+            raise SplitError(f"cue lists {count} tracks, split made {len(made)}")
+        _check(run(["cuetag.sh", str(rip.cue), *map(str, made)]), "cuetag.sh")
+    except BaseException:
+        shutil.rmtree(staging)  # made above in this call, holds only split output
+        raise
+
+    staging.rename(album)
+    holding.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(rip.folder), str(held))
+    return SplitResult(sorted(album.glob("*.flac")), count, held)

@@ -1,6 +1,16 @@
 from pathlib import Path
 
-from musicos.split import Rip, cue_track_count, read_cue, scan
+import pytest
+
+from musicos.runner import Output
+from musicos.split import (
+    Rip,
+    SplitError,
+    cue_track_count,
+    read_cue,
+    scan,
+    split_rip,
+)
 
 CUE = """\
 REM GENRE "Death Metal"
@@ -107,3 +117,124 @@ def test_scan_lists_rips_in_path_order(tmp_path: Path) -> None:
     touch(tmp_path, "B/b.flac", "B/b.cue", "A/a.flac", "A/a.cue")
 
     assert [r.folder.name for r in scan(tmp_path).rips] == ["A", "B"]
+
+
+class Tools:
+    """Fake cuebreakpoints, shnsplit and cuetag.sh. shnsplit writes track files."""
+
+    def __init__(self, tracks_made: int = 3, fail: str | None = None) -> None:
+        self.tracks_made = tracks_made
+        self.fail = fail
+        self.commands: list[list[str]] = []
+
+    def __call__(self, cmd: list[str]) -> Output:
+        self.commands.append(cmd)
+        if cmd[0] == self.fail:
+            return Output("", f"{cmd[0]}: boom\n", 1)
+        if cmd[0] == "cuebreakpoints":
+            return Output("5:20.56\n8:08.32\n", "", 0)
+        if cmd[0] == "shnsplit":
+            out_dir = Path(cmd[cmd.index("-d") + 1])
+            for n in range(1, self.tracks_made + 1):
+                (out_dir / f"split-track{n:02d}.flac").write_bytes(b"x")
+        return Output("", "", 0)
+
+
+def make_rip(tmp_path: Path) -> Rip:
+    folder = tmp_path / "src" / "Gatecreeper-2019-Deserted"
+    folder.mkdir(parents=True)
+    flac, cue = folder / "Deserted.flac", folder / "Deserted.cue"
+    flac.write_bytes(b"big")
+    cue.write_text(CUE)
+    (folder / "rip.log").write_text("log")
+    return Rip(folder, flac, cue)
+
+
+def test_split_puts_tracks_in_the_inbox_and_the_source_in_holding(
+    tmp_path: Path,
+) -> None:
+    rip = make_rip(tmp_path)
+    tools = Tools()
+
+    result = split_rip(rip, tmp_path / "inbox", tmp_path / "holding", tools)
+
+    album = tmp_path / "inbox" / "Gatecreeper-2019-Deserted"
+    assert result.tracks == [album / f"split-track0{n}.flac" for n in (1, 2, 3)]
+    assert result.track_count == 3
+    held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
+    assert result.holding == held
+    assert sorted(p.name for p in held.iterdir()) == [
+        "Deserted.cue",
+        "Deserted.flac",
+        "rip.log",
+    ]
+    assert not rip.folder.exists()
+    assert [p.name for p in (tmp_path / "inbox").iterdir()] == [album.name]
+
+
+def test_split_runs_the_three_tools_in_order(tmp_path: Path) -> None:
+    rip = make_rip(tmp_path)
+    tools = Tools()
+
+    split_rip(rip, tmp_path / "inbox", tmp_path / "holding", tools)
+
+    assert [c[0] for c in tools.commands] == ["cuebreakpoints", "shnsplit", "cuetag.sh"]
+    assert tools.commands[0] == ["cuebreakpoints", str(rip.cue)]
+    shnsplit = tools.commands[1]
+    assert shnsplit[-1] == str(rip.flac)
+    assert shnsplit[shnsplit.index("-o") + 1] == "flac"
+    cuetag = tools.commands[2]
+    assert cuetag[1] == str(rip.cue)
+    assert len(cuetag) == 2 + 3
+
+
+def assert_nothing_changed(rip: Rip, tmp_path: Path) -> None:
+    assert rip.flac.read_bytes() == b"big"
+    assert rip.cue.exists()
+    inbox = tmp_path / "inbox"
+    assert not inbox.exists() or list(inbox.iterdir()) == []
+    assert not (tmp_path / "holding").exists()
+
+
+def test_split_with_the_wrong_track_count_changes_nothing(tmp_path: Path) -> None:
+    rip = make_rip(tmp_path)
+
+    with pytest.raises(SplitError, match="3 tracks.*made 2"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools(tracks_made=2))
+
+    assert_nothing_changed(rip, tmp_path)
+
+
+@pytest.mark.parametrize("tool", ["cuebreakpoints", "shnsplit", "cuetag.sh"])
+def test_split_with_a_failing_tool_changes_nothing(tmp_path: Path, tool: str) -> None:
+    rip = make_rip(tmp_path)
+
+    with pytest.raises(SplitError, match=f"{tool}: boom"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools(fail=tool))
+
+    assert_nothing_changed(rip, tmp_path)
+
+
+def test_split_of_a_cue_with_no_tracks_changes_nothing(tmp_path: Path) -> None:
+    rip = make_rip(tmp_path)
+    rip.cue.write_text('PERFORMER "x"\n')
+    tools = Tools()
+
+    with pytest.raises(SplitError, match="no audio tracks"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", tools)
+
+    assert tools.commands == []
+    assert_nothing_changed(rip, tmp_path)
+
+
+def test_split_never_overwrites_an_existing_album(tmp_path: Path) -> None:
+    rip = make_rip(tmp_path)
+    existing = tmp_path / "inbox" / "Gatecreeper-2019-Deserted"
+    existing.mkdir(parents=True)
+    (existing / "keep.flac").write_bytes(b"keep")
+
+    with pytest.raises(SplitError, match="already exists"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+
+    assert (existing / "keep.flac").read_bytes() == b"keep"
+    assert rip.flac.exists()
