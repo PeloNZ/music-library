@@ -89,5 +89,5 @@ Done: tools installed, dependencies in `.venv`, MusicOS skills and docs copied i
 Open:
 
 - The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), a `Peter Bjorn &amp; John` folder, `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
-- `musicos/` has one command: `preflight` (checks `BEETSDIR`, the share mount and the enabled plugins; exit 1 on any failure). Next: `lint`, `ingest`, `gaps`, `split`, `plex-refresh`.
+- `musicos/` has two commands: `preflight` (checks `BEETSDIR`, the share mount and the enabled plugins) and `lint` (preflight, then six read-only health checks, a report in `beetsdir/logs/last-health-report.md` and a line in `musicos-activity.log`). Both exit 1 on failure. Next: `ingest`, `gaps`, `split`, `plex-refresh`.
 - `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.
