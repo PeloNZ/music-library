@@ -8,6 +8,7 @@ bytes are the AppleDouble header, so a real file with such a name is safe.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 APPLEDOUBLE_MAGIC = bytes([0x00, 0x05, 0x16, 0x07])
@@ -30,3 +31,30 @@ def find_appledouble(root: Path) -> list[Path]:
             if name.startswith("._") and _is_shadow(path):
                 found.append(path)
     return sorted(found)
+
+
+@dataclass(frozen=True)
+class DeleteResult:
+    deleted: list[Path] = field(default_factory=list)
+    failed: list[tuple[Path, str]] = field(default_factory=list)
+    bytes: int = 0
+
+
+def delete_appledouble(paths: list[Path]) -> DeleteResult:
+    """Delete shadow files. Each is checked again just before it goes. A file
+    that cannot be deleted is reported and the rest carry on."""
+    deleted: list[Path] = []
+    failed: list[tuple[Path, str]] = []
+    freed = 0
+    for path in paths:
+        try:
+            if not _is_shadow(path):
+                continue
+            size = path.stat().st_size
+            path.unlink()
+        except OSError as exc:
+            failed.append((path, exc.strerror or str(exc)))
+            continue
+        deleted.append(path)
+        freed += size
+    return DeleteResult(deleted, failed, freed)

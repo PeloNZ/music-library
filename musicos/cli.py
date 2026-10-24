@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.changelog import filter_entries, format_entry, read_entries, record
 from musicos.envfile import merged_env
 from musicos.folders import (
@@ -421,6 +422,49 @@ def gaps(env: Mapping[str, str], run: Run, when: datetime) -> int:
     return 0
 
 
+def clean_appledouble(
+    env: Mapping[str, str], args: argparse.Namespace, when: datetime
+) -> int:
+    root: Path = args.root.resolve()
+    if root in (Path("/"), Path("/Volumes")):
+        print(f"FAIL root: refusing to scan {root}; name a folder inside a share")
+        return 1
+    if not root.is_dir():
+        print(f"FAIL root: {root} is not a folder")
+        return 1
+    if args.apply and not print_results_if_failed([check_beetsdir(env)]):
+        return 1  # deleting is a change, so it must be logged
+    found = find_appledouble(root)
+    if not found:
+        print(f"no AppleDouble files found under {root}")
+        return 0
+    size = sum(p.stat().st_size for p in found)
+    print(f"found {len(found)} AppleDouble files ({size} bytes) under {root}")
+    for path in found[:10]:
+        print(f"  {path}")
+    if len(found) > 10:
+        print(f"  ... {len(found) - 10} more")
+    if not args.apply:
+        print("dry run: nothing deleted. Add --apply to delete them.")
+        return 0
+    result = delete_appledouble(found)
+    print(f"deleted {len(result.deleted)} AppleDouble files ({result.bytes} bytes)")
+    for path, reason in result.failed[:10]:
+        print(f"FAIL {path.name}: {reason}")
+    if result.deleted:
+        record(
+            Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+            "clean-appledouble",
+            when,
+            root=str(root),
+            deleted=len(result.deleted),
+            failed=len(result.failed),
+            bytes=result.bytes,
+            examples=[str(p) for p in result.deleted[:20]],
+        )
+    return 1 if result.failed else 0
+
+
 def print_results_if_failed(results: list[Result]) -> bool:
     """Print only failures. True when every result passed."""
     failed = [r for r in results if not r.ok]
@@ -493,6 +537,15 @@ def main(
     folders_parser.add_argument(
         "--apply", action="store_true", help="create the folders (default is a dry run)"
     )
+    clean_parser = commands.add_parser(
+        "clean-appledouble", help="remove macOS ._ shadow files under a folder"
+    )
+    clean_parser.add_argument(
+        "root", type=Path, help="folder to scan, not a whole share"
+    )
+    clean_parser.add_argument(
+        "--apply", action="store_true", help="delete them (default is a dry run)"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -507,6 +560,8 @@ def main(
         return plex_command(env, args, now(), http)
     if args.command == "folders":
         return folders_command(env, args, now(), http)
+    if args.command == "clean-appledouble":
+        return clean_appledouble(env, args, now())
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":

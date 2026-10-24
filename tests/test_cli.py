@@ -10,6 +10,7 @@ from musicos.cli import main
 from musicos.plex import Response
 from musicos.runner import Output, Run
 from tests.fakes import FakeHttp, Tools
+from tests.test_appledouble import shadow
 from tests.test_split import CUE, cross_device
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
@@ -1349,3 +1350,134 @@ def test_ingest_stops_when_the_dry_run_fails(
     assert "FAIL dry run: error: no such folder" in out
     assert "uv run beet import" not in out
     assert not run.ran_import()
+
+
+def dirty_share(root: Path) -> Path:
+    """An album folder with data files, two shadows and one real ._ file."""
+    album = root / "Cake" / "Fashion Nugget"
+    album.mkdir(parents=True)
+    (album / "01 Song.flac").write_bytes(b"audio")
+    shadow(album / "._01 Song.flac")
+    shadow(album / "._cover.jpg")
+    (album / "._notes.txt").write_text("my own notes")
+    return root
+
+
+def test_clean_appledouble_without_apply_lists_and_deletes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = dirty_share(tmp_path / "share")
+
+    code = main(["clean-appledouble", str(root)], env={})
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "found 2 AppleDouble files (8192 bytes)" in out
+    assert "._01 Song.flac" in out
+    assert "dry run: nothing deleted. Add --apply to delete them." in out
+    assert len(list(root.rglob("._*"))) == 3
+
+
+def test_clean_appledouble_apply_deletes_only_real_shadows_and_logs_it(
+    tmp_path: Path,
+) -> None:
+    root = dirty_share(tmp_path / "share")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["clean-appledouble", str(root), "--apply"],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+    )
+
+    assert code == 0
+    left = sorted(p.name for p in root.rglob("._*"))
+    assert left == ["._notes.txt"]
+    assert (root / "Cake" / "Fashion Nugget" / "01 Song.flac").read_bytes() == b"audio"
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["action"] == "clean-appledouble"
+    assert entry["root"] == str(root)
+    assert entry["deleted"] == 2
+    assert entry["bytes"] == 8192
+    assert len(entry["examples"]) == 2
+
+
+def test_clean_appledouble_apply_needs_beetsdir_so_it_can_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = dirty_share(tmp_path / "share")
+
+    code = main(["clean-appledouble", str(root), "--apply"], env={})
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out
+    assert len(list(root.rglob("._*"))) == 3
+
+
+def test_clean_appledouble_reports_a_file_it_cannot_delete_and_carries_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = dirty_share(tmp_path / "share")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "._cover.jpg":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    code = main(
+        ["clean-appledouble", str(root), "--apply"],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL ._cover.jpg: Permission denied" in out
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["deleted"] == 1 and entry["failed"] == 1
+
+
+def test_clean_appledouble_with_nothing_to_delete_logs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "share"
+    (root / "A").mkdir(parents=True)
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["clean-appledouble", str(root), "--apply"],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+    )
+
+    assert code == 0
+    assert "no AppleDouble files found" in capsys.readouterr().out
+    assert not (beets / "logs").exists()
+
+
+@pytest.mark.parametrize("bad", ["/", "/Volumes"])
+def test_clean_appledouble_refuses_a_root_that_is_too_broad(
+    bad: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["clean-appledouble", bad], env={})
+
+    assert code == 1
+    assert "FAIL root: refusing to scan" in capsys.readouterr().out
+
+
+def test_clean_appledouble_stops_when_the_root_is_not_a_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["clean-appledouble", str(tmp_path / "missing")], env={})
+
+    assert code == 1
+    assert "FAIL root: " in capsys.readouterr().out
