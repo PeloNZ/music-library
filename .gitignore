@@ -1,0 +1,25 @@
+# Dependencies (created by `uv sync`)
+.venv/
+
+# beets state: config holds the AcoustID key; the DBs and logs are local to this machine
+/beetsdir/config.yaml
+/beetsdir/library.db
+/beetsdir/library.db-*
+/beetsdir/state.pickle
+/beetsdir/logs/
+/beetsdir/exports/
+/beetsdir-test/
+
+# Test copy of the library
+/music-test/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and OS
+.idea/
+.DS_Store
