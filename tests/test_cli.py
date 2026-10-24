@@ -702,3 +702,49 @@ def test_split_stops_when_a_tool_is_not_installed(
     assert code == 1
     assert "FAIL tools: shnsplit not found" in capsys.readouterr().out
     assert (tmp_path / "src" / "Deserted" / "a.flac").exists()
+
+
+def test_main_reads_variables_from_the_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beets = tmp_path / "beets"
+    (beets / "logs").mkdir(parents=True)
+    record(beets / "logs" / "changes.jsonl", "import", NOW, batch="b1")
+    (beets / "config.yaml").write_text("directory: /x\n")
+    env_file = tmp_path / "vars"
+    env_file.write_text(f"BEETSDIR={beets}\n")
+    monkeypatch.delenv("BEETSDIR", raising=False)
+
+    code = main(["log"], env_file=env_file)
+
+    assert code == 0
+
+
+def test_main_prefers_the_shell_over_the_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    real = tmp_path / "real"
+    (real / "logs").mkdir(parents=True)
+    record(real / "logs" / "changes.jsonl", "import", NOW, batch="from-shell")
+    (real / "config.yaml").write_text("directory: /x\n")
+    env_file = tmp_path / "vars"
+    env_file.write_text(f"BEETSDIR={tmp_path / 'other'}\n")
+    monkeypatch.setenv("BEETSDIR", str(real))
+
+    main(["log"], env_file=env_file)
+
+    assert "from-shell" in capsys.readouterr().out
+
+
+def test_main_reports_a_bad_env_file_without_echoing_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / "vars"
+    env_file.write_text("my-secret-token\n")
+
+    code = main(["log"], env_file=env_file)
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL env: " in out and "line 1" in out
+    assert "my-secret-token" not in out

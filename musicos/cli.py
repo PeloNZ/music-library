@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from musicos.changelog import filter_entries, format_entry, read_entries, record
+from musicos.envfile import merged_env
 from musicos.ingest import (
     batch_items,
     dry_run_command,
@@ -36,6 +37,10 @@ from musicos.preflight import (
 )
 from musicos.runner import Run, run_command
 from musicos.split import SplitError, cue_track_count, read_cue, scan, split_rip
+
+# Settings kept out of the repo and out of shell history, such as PLEX_TOKEN.
+# Variables already set in the shell take priority.
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 def load_config(env: Mapping[str, str]) -> dict[str, Any]:
@@ -235,11 +240,18 @@ def split(
 
 def main(
     argv: Sequence[str] | None = None,
-    env: Mapping[str, str] = os.environ,
+    env: Mapping[str, str] | None = None,
     run: Run = run_command,
     now: Callable[[], datetime] = datetime.now,
     which: Callable[[str], str | None] = shutil.which,
+    env_file: Path = ENV_FILE,
 ) -> int:
+    if env is None:
+        try:
+            env = merged_env(env_file, os.environ)
+        except ValueError as exc:
+            print(f"FAIL env: {exc}")
+            return 1
     parser = argparse.ArgumentParser(prog="musicos")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(
