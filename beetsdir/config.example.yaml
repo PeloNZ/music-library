@@ -6,9 +6,11 @@
 
 # --------------- Where things live ---------------
 
-# The NAS share, mounted on this Mac. `musicos preflight` stops a run when
-# nothing is mounted here.
-directory: /Volumes/music
+# The library folder on the NAS, through the `media` share. Use this share
+# only, and never the separate `music` share: the inbox and holding folders
+# are on it too, so every move is a rename and nothing is copied between
+# shares. `musicos preflight` stops a run when nothing is mounted here.
+directory: /Volumes/media/jbod2/media/music
 
 # Relative paths resolve inside BEETSDIR (this file's own directory).
 library: library.db
@@ -79,7 +81,7 @@ format_raw_length: yes
 smartplaylist:
   auto: no
   playlist_dir: CHANGE-ME/path/to/where/your/player/reads/playlists
-  relative_to: /Volumes/music   # should match directory: above
+  relative_to: /Volumes/media/jbod2/media/music   # should match directory: above
   playlists: []
     # - name: 'Jazz.m3u'
     #   query: 'genre:jazz'
