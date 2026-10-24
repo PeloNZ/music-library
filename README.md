@@ -2,7 +2,7 @@
 
 Repair a music library with [beets](https://beets.io/), driven from Claude Code, played by Plex.
 
-- Identify unknown tracks by acoustic fingerprint (AcoustID).
+- Identify unknown tracks by acoustic fingerprint (AcoustID, through the beets `chroma` plugin).
 - Fill missing tags and album art.
 - Split album FLAC rips (one FLAC plus a `.cue` file) into tracks.
 - Organise files on disk as `Album Artist/Year - Album/NN Title`.
@@ -36,7 +36,7 @@ Built on [MusicOS](https://github.com/fernandohermida/MusicOS) by Fernando Hermi
 
 ## Set up
 
-Needs macOS, [Homebrew](https://brew.sh), [uv](https://docs.astral.sh/uv/), and an AcoustID API key (free at https://acoustid.org).
+Needs macOS, [Homebrew](https://brew.sh) and [uv](https://docs.astral.sh/uv/). Fingerprint matching needs no AcoustID key: beets uses its own.
 
 ```sh
 brew bundle                  # system tools
@@ -50,7 +50,6 @@ Always set `BEETSDIR`. Without it, beets writes its config and database to `~/.c
 Edit `beetsdir/config.yaml`:
 
 - `directory: /Volumes/music`
-- `acoustid: apikey:` your key. The file is gitignored.
 
 Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/music`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/music`.
 
@@ -89,5 +88,5 @@ Done: tools installed, dependencies in `.venv`, MusicOS skills and docs copied i
 Open:
 
 - The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
-- `musicos/` has four commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, six read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, AcoustID key and source checks, dry run, then the import command; unattended runs it) and `summary <batch>` (albums in an import batch, and those with no MusicBrainz match). All exit 1 on failure. Next: `gaps`, `split`, `plex-refresh`.
+- `musicos/` has four commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, six read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, source check, dry run, then the import command; unattended runs it) and `summary <batch>` (albums in an import batch, and those with no MusicBrainz match). All exit 1 on failure. Next: `gaps`, `split`, `plex-refresh`.
 - `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.

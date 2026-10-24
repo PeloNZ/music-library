@@ -13,7 +13,7 @@ uv run musicos ingest <source-folder>
 
 The command:
 
-1. Runs `musicos preflight` (`BEETSDIR`, share mount, plugins) and checks that the AcoustID key is set.
+1. Runs `musicos preflight` (`BEETSDIR`, share mount, plugins).
 2. Checks that the source folder holds audio files.
 3. Makes a batch id: `<YYYYMMDD-HHMM>-<slug of the folder name>`.
 4. Runs `beet import --pretend` and prints the file list. It shows files, not matches.

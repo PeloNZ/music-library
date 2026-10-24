@@ -1,8 +1,7 @@
 # beets config template.
 #
 # Copy this file to config.yaml (in the same beetsdir/ folder) and fill in
-# the values marked CHANGE-ME below. config.yaml is gitignored: put the
-# AcoustID key there, never in this file.
+# the values marked CHANGE-ME below. config.yaml is gitignored.
 # See docs/LIBRARY-LAYOUT.md for the paths: section below.
 
 # --------------- Where things live ---------------
@@ -21,9 +20,9 @@ plugins: >-
   export types missing duplicates unimported musicbrainz smartplaylist
   inline chroma fetchart embedart lastgenre info
 
-# CHANGE-ME: free key from https://acoustid.org
-acoustid:
-  apikey: CHANGE-ME
+# chroma looks fingerprints up with beets' own AcoustID application key, so
+# matching needs no key here. `acoustid: apikey:` is a user key that only
+# `beet submit` reads, to upload fingerprints. Leave it out.
 
 # --------------- On-disk layout ---------------
 # Artist/Album, with the disc number only on multi-disc albums:
