@@ -1,4 +1,6 @@
-from musicos.lint import CHECKS, CheckResult, run_lint
+from datetime import datetime
+
+from musicos.lint import CHECKS, CheckResult, activity_line, render_report, run_lint
 from musicos.runner import Output, Run
 
 ESC = "\x1b"
@@ -89,3 +91,40 @@ def test_a_failing_command_is_reported_with_its_message() -> None:
     dupes = result(results, "duplicates")
     assert dupes.error == "error: plugin not found"
     assert dupes.count == 0
+
+
+WHEN = datetime(2026, 10, 24, 21, 30, 5)
+FINDINGS = [
+    CheckResult("duplicates", 2, ["Opeth - Heritage", "Opeth - Orchid"]),
+    CheckResult("incomplete albums", 0),
+    CheckResult("unimported files", 0, error="exit code 2"),
+]
+
+
+def test_report_lists_every_check_with_its_count() -> None:
+    report = render_report(FINDINGS, WHEN)
+
+    assert report.startswith("# Library health report\n")
+    assert "2026-10-24 21:30:05" in report
+    assert "| duplicates | 2 |" in report
+    assert "| incomplete albums | 0 |" in report
+
+
+def test_report_shows_examples_and_errors() -> None:
+    report = render_report(FINDINGS, WHEN)
+
+    assert "- Opeth - Heritage\n- Opeth - Orchid" in report
+    assert "unimported files: could not run (exit code 2)" in report
+
+
+def test_report_says_how_many_examples_are_hidden() -> None:
+    capped = [CheckResult("singletons", 25, [f"t{n}" for n in range(10)])]
+
+    assert "15 more not shown" in render_report(capped, WHEN)
+
+
+def test_activity_line_counts_issues_and_categories() -> None:
+    assert (
+        activity_line(FINDINGS, WHEN)
+        == "2026-10-24 21:30:05 lint 2 issues across 1 categories"
+    )

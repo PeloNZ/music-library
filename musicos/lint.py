@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from musicos.runner import Output, Run
 
@@ -64,3 +65,37 @@ def run_lint(run: Run) -> list[CheckResult]:
         out = run(cmd)
         results.append(_drift(out) if name == DRIFT else _lines_as_findings(name, out))
     return results
+
+
+def _when(when: datetime) -> str:
+    return when.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def render_report(results: list[CheckResult], when: datetime) -> str:
+    lines = [
+        "# Library health report",
+        "",
+        f"Run at {_when(when)}",
+        "",
+        "| Check | Findings |",
+        "|---|---|",
+    ]
+    for r in results:
+        lines.append(f"| {r.name} | {'n/a' if r.error else r.count} |")
+    for r in results:
+        lines.append("")
+        if r.error:
+            lines.append(f"## {r.name}: could not run ({r.error})")
+            continue
+        lines += [f"## {r.name} ({r.count})", ""]
+        lines += [f"- {example}" for example in r.examples]
+        hidden = r.count - len(r.examples)
+        if hidden > 0:
+            lines.append(f"- ... {hidden} more not shown")
+    return "\n".join(lines) + "\n"
+
+
+def activity_line(results: list[CheckResult], when: datetime) -> str:
+    issues = sum(r.count for r in results)
+    categories = sum(1 for r in results if r.count > 0)
+    return f"{_when(when)} lint {issues} issues across {categories} categories"
