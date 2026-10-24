@@ -79,11 +79,14 @@ All in `beetsdir/logs/` (gitignored).
 | File | Contents |
 |---|---|
 | `changes.jsonl` | One JSON line per action that changed files or tags: `time`, `action`, then fields. Read it with `uv run musicos log`. |
-| `musicos-activity.log` | One text line per run of `lint`, `ingest` or `summary`: that it ran, with counts. |
+| `musicos-activity.log` | One line per event, stamped when it happens: `<command> <subject> start`, then `done` or `FAIL <error>`, for `ingest --unattended`, `batch --apply`, `split --apply`, `folders --apply` and `clean-appledouble --apply`. The end line of an import is `ingest <batch> <n> albums, <m> flagged`. `lint`, `gaps`, `dupes` and `summary` add one line with counts. Follow it with `tail -f beetsdir/logs/musicos-activity.log`. |
+| `split-<id>.out` | What `shnsplit` and `cuetag.sh` print while `split --apply` splits one rip, written as it appears. `<id>` is `<YYYYMMDD-HHMM>-<slug of the rip folder>`. |
 | `import-<batch>.out` | Everything beets prints during an unattended import, written as it appears and echoed to the terminal. Follow it with `tail -f beetsdir/logs/import-<batch>.out`. The first line is the command. |
 | `import-<batch>.log` | Written by `beet import -l`: albums beets skipped or imported as-is. `import-<batch>-retry.log` holds the decisions on the skipped albums. |
 
 `uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.
+
+A command that stops after it may have changed files appends a `failed` entry: `command`, `subject`, `error`.
 
 `changes.jsonl` holds one entry for each change a command makes: `split`, `ingest`, `folders --apply`, `clean-appledouble --apply` and `plex refresh`. An import entry holds the batch, the source folder (only for `ingest --unattended`), the album and flagged counts, and the path of every imported item. A split entry holds the source and the track count. Each command added later that changes files must append its own entries.
 
@@ -142,6 +145,7 @@ Known limit: a multi-disc album in `CD1/` and `CD2/` folders is passed to beets 
 - Keep `import.copy: yes` until move mode is approved. Copy mode needs free space on the share equal to the size of each batch.
 - Write every import run to a log file.
 - Every command that changes files or tags appends to `changes.jsonl`.
+- Every command that changes files writes a start line and a done or FAIL line to `musicos-activity.log`, and a long tool writes its output to an `.out` log as it runs, so `tail -f` shows progress.
 - Never copy between shares. `split` refuses unless the source, the inbox and the holding folder are on one share, and it moves by rename.
 - Keep source FLAC and `.cue` files until the split tracks are confirmed correct.
 - Deleting deletion candidates is the last step of a batch, after the import is checked.
