@@ -483,6 +483,43 @@ def test_summary_lists_the_albums_the_importer_skipped(
     ]
 
 
+def test_summary_prints_one_command_to_retry_only_the_skipped_albums(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    write_import_log(
+        beets,
+        "b1",
+        "skip /inbox/Cake/Fashion Nugget\n"
+        "asis /inbox/Demo\n"
+        "skip /inbox/Isis/[2004] Panopticon\n",
+    )
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    retry = (
+        "uv run beet import -i -R -l "
+        f"{beets}/logs/import-b1-retry.log --set musicos_batch=b1 "
+        "'/inbox/Cake/Fashion Nugget' '/inbox/Isis/[2004] Panopticon'"
+    )
+    assert retry in out
+    assert "Demo'" not in retry
+
+
+def test_summary_with_nothing_skipped_prints_no_retry_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    write_import_log(beets, "b1", "asis /inbox/Demo\n")
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    assert "-retry.log" not in capsys.readouterr().out
+
+
 def test_summary_without_an_import_log_lists_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

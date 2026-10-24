@@ -53,6 +53,7 @@ from musicos.ingest import (
     import_command,
     make_batch_id,
     parse_import_log,
+    retry_command,
     summarize_batch,
 )
 from musicos.lint import activity_line, render_report, run_lint
@@ -172,6 +173,10 @@ def report_batch(
         print(f"{len(logged)} logged by the importer (not imported as matched):")
         for entry in logged:
             print(f"  {entry.kind}: {entry.path}")
+    skipped = [Path(e.path) for e in logged if e.kind == "skip"]
+    if skipped:
+        print("Decide the skipped albums in your own terminal. Beets asks for each:")
+        print(f"  uv run {shlex.join(retry_command(skipped, batch, logs_dir(env)))}")
     fields: dict[str, Any] = {"batch": batch}
     if source is not None:
         fields["source"] = str(source)
