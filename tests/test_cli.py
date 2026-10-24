@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from musicos.changelog import record
 from musicos.cli import main
 from musicos.runner import Output, Run
 
@@ -266,3 +267,111 @@ def test_summary_reads_a_finished_batch_and_logs(
     assert "Deserted" in capsys.readouterr().out
     log = (beets / "logs" / "musicos-activity.log").read_text()
     assert log.endswith("ingest 20261024-2130-deserted 1 albums, 1 flagged\n")
+
+
+def fill_log(beets: Path) -> None:
+    log = beets / "logs" / "changes.jsonl"
+    record(
+        log,
+        "import",
+        datetime(2026, 10, 23, 9, 0, 0),
+        batch="b1",
+        albums=2,
+        items=["/lib/a.flac", "/lib/b.flac", "/lib/c.flac"],
+        source="/inbox/x",
+    )
+    record(
+        log, "move", datetime(2026, 10, 24, 9, 0, 0), batch="b2", moved=[["/a", "/b"]]
+    )
+
+
+def test_log_prints_one_line_per_entry_with_lists_as_counts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fill_log(tmp_path)
+
+    code = main(["log"], env=make_beetsdir(tmp_path), run=fake_run())
+
+    assert code == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "2026-10-23T09:00:00 import batch=b1 albums=2 items=3 source=/inbox/x",
+        "2026-10-24T09:00:00 move batch=b2 moved=1",
+    ]
+
+
+def test_log_filters_by_batch_and_action(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fill_log(tmp_path)
+
+    main(["log", "--batch", "b2"], env=make_beetsdir(tmp_path), run=fake_run())
+    by_batch = capsys.readouterr().out
+    main(["log", "--action", "import"], env=make_beetsdir(tmp_path), run=fake_run())
+    by_action = capsys.readouterr().out
+
+    assert by_batch.count("\n") == 1 and "move" in by_batch
+    assert by_action.count("\n") == 1 and "import" in by_action
+
+
+def test_log_filters_by_start_date_and_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fill_log(tmp_path)
+
+    main(["log", "--since", "2026-10-24"], env=make_beetsdir(tmp_path), run=fake_run())
+    since = capsys.readouterr().out
+    main(["log", "--last", "1"], env=make_beetsdir(tmp_path), run=fake_run())
+    last = capsys.readouterr().out
+
+    assert since == last
+    assert "move" in since
+
+
+def test_log_json_prints_the_raw_entries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fill_log(tmp_path)
+
+    main(["log", "--json", "--last", "1"], env=make_beetsdir(tmp_path), run=fake_run())
+
+    raw = (tmp_path / "logs" / "changes.jsonl").read_text().splitlines()[-1]
+    assert capsys.readouterr().out == raw + "\n"
+
+
+def test_log_says_when_nothing_was_recorded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["log"], env=make_beetsdir(tmp_path), run=fake_run())
+
+    assert code == 0
+    assert "no changes recorded" in capsys.readouterr().out
+
+
+def test_log_needs_no_mounted_share(tmp_path: Path) -> None:
+    fill_log(tmp_path)
+
+    code = main(["log"], env=make_beetsdir(tmp_path), run=fake_run(mounts=""))
+
+    assert code == 0
+
+
+def test_log_reports_a_corrupt_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fill_log(tmp_path)
+    with (tmp_path / "logs" / "changes.jsonl").open("a") as f:
+        f.write("{oops\n")
+
+    code = main(["log"], env=make_beetsdir(tmp_path), run=fake_run())
+
+    assert code == 1
+    assert "line 3" in capsys.readouterr().out
+
+
+def test_log_fails_when_beetsdir_is_unset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(["log"], env={}, run=fake_run())
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import sys
@@ -13,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from musicos.changelog import filter_entries, format_entry, read_entries
 from musicos.ingest import (
     dry_run_command,
     has_audio,
@@ -117,6 +119,26 @@ def ingest(
     return report_batch(env, run, batch, when)
 
 
+def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
+    beetsdir = check_beetsdir(env)
+    if not beetsdir.ok:
+        print_results([beetsdir])
+        return 1
+    try:
+        entries = read_entries(Path(env["BEETSDIR"]) / "logs" / "changes.jsonl")
+    except ValueError as exc:
+        print(f"FAIL log: {exc}")
+        return 1
+    shown = filter_entries(entries, args.batch, args.action, args.since, args.last)
+    if not shown:
+        print("no changes recorded")
+    for entry in shown:
+        print(
+            json.dumps(entry, ensure_ascii=False) if args.json else format_entry(entry)
+        )
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     env: Mapping[str, str] = os.environ,
@@ -138,8 +160,16 @@ def main(
     )
     summary_parser = commands.add_parser("summary", help="report on an import batch")
     summary_parser.add_argument("batch")
+    log_parser = commands.add_parser("log", help="show the change log")
+    log_parser.add_argument("--batch")
+    log_parser.add_argument("--action")
+    log_parser.add_argument("--since", type=datetime.fromisoformat, help="YYYY-MM-DD")
+    log_parser.add_argument("--last", type=int, help="only the newest N entries")
+    log_parser.add_argument("--json", action="store_true", help="print raw entries")
     args = parser.parse_args(argv)
 
+    if args.command == "log":
+        return show_log(env, args)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":

@@ -55,3 +55,13 @@ def filter_entries(
     if last is None:
         return kept
     return kept[max(len(kept) - last, 0) :]
+
+
+def format_entry(entry: Entry) -> str:
+    """One line: time, action, then each field. A list shows as its length."""
+    parts = [entry["time"], entry["action"]]
+    for key, value in entry.items():
+        if key in ("time", "action"):
+            continue
+        parts.append(f"{key}={len(value) if isinstance(value, list) else value}")
+    return " ".join(parts)
