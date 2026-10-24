@@ -2,6 +2,7 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -165,7 +166,7 @@ def rel(
     artist: str = "Isis",
     disc: str = "1",
     tracks: int = 11,
-    **kw: object,
+    **kw: Any,
 ) -> Release:
     base = {
         "folder": Path(folder),
@@ -180,7 +181,7 @@ def rel(
         "cue": False,
         "unreadable": 0,
     }
-    return Release(**{**base, **kw})  # type: ignore[arg-type]
+    return Release(**{**base, **kw})
 
 
 def test_normalize_ignores_case_accents_punctuation_and_bracketed_notes() -> None:
