@@ -12,6 +12,7 @@ from musicos.ingest import (
     import_command,
     make_batch_id,
     parse_import_log,
+    retry_command,
     summarize_batch,
 )
 from musicos.runner import Output
@@ -46,13 +47,21 @@ LOGS = Path("/repo/beetsdir/logs")
 
 
 def test_dry_run_only_lists_files() -> None:
-    assert dry_run_command(SOURCE) == ["beet", "import", "--pretend", str(SOURCE)]
+    assert dry_run_command([SOURCE]) == ["beet", "import", "--pretend", str(SOURCE)]
+
+
+def test_dry_run_of_several_folders_lists_each() -> None:
+    other = Path("/Volumes/music/_inbox/Other")
+
+    assert dry_run_command([SOURCE, other])[-2:] == [str(SOURCE), str(other)]
 
 
 def test_assisted_import_logs_and_tags_the_batch() -> None:
-    assert import_command(SOURCE, BATCH, LOGS, unattended=False) == [
+    assert import_command([SOURCE], BATCH, LOGS, unattended=False) == [
         "beet",
         "import",
+        "-i",
+        "-R",
         "-l",
         f"/repo/beetsdir/logs/import-{BATCH}.log",
         "--set",
@@ -61,13 +70,40 @@ def test_assisted_import_logs_and_tags_the_batch() -> None:
     ]
 
 
+def test_import_skips_folders_beets_already_imported_and_retries_skipped_ones() -> None:
+    cmd = import_command([SOURCE], BATCH, LOGS, unattended=True)
+
+    assert "-i" in cmd  # incremental: an imported folder is not imported again
+    assert "-R" in cmd  # a skipped folder is not recorded, so a rerun retries it
+
+
+def test_import_of_several_folders_is_one_command() -> None:
+    other = Path("/Volumes/music/_inbox/Other")
+
+    cmd = import_command([SOURCE, other], BATCH, LOGS, unattended=True)
+
+    assert cmd.count("beet") == 1
+    assert cmd[-2:] == [str(SOURCE), str(other)]
+
+
 def test_unattended_import_skips_what_it_cannot_match() -> None:
-    cmd = import_command(SOURCE, BATCH, LOGS, unattended=True)
+    cmd = import_command([SOURCE], BATCH, LOGS, unattended=True)
 
     assert cmd[-4:-1] == ["-q", "--quiet-fallback", "skip"]
     assert cmd[-1] == str(SOURCE)
     assert "-l" in cmd
     assert f"musicos_batch={BATCH}" in cmd
+
+
+def test_retry_command_imports_only_the_skipped_folders_with_prompts() -> None:
+    skipped = [Path("/lib/Isis/A"), Path("/lib/Isis/B")]
+
+    cmd = retry_command(skipped, BATCH, LOGS)
+
+    assert "-q" not in cmd
+    assert cmd[-2:] == ["/lib/Isis/A", "/lib/Isis/B"]
+    assert f"musicos_batch={BATCH}" in cmd
+    assert cmd[cmd.index("-l") + 1] == f"/repo/beetsdir/logs/import-{BATCH}-retry.log"
 
 
 def album(name: str, mb_albumid: str) -> dict[str, object]:

@@ -26,25 +26,39 @@ def make_batch_id(when: datetime, source: Path) -> str:
     return f"{when:%Y%m%d-%H%M}-{slug or 'import'}"
 
 
-def dry_run_command(source: Path) -> list[str]:
+def dry_run_command(sources: list[Path]) -> list[str]:
     """Lists the files beets would import. It does not show matches."""
-    return ["beet", "import", "--pretend", str(source)]
+    return ["beet", "import", "--pretend", *map(str, sources)]
 
 
-def import_command(source: Path, batch: str, logs: Path, unattended: bool) -> list[str]:
+def import_command(
+    sources: list[Path],
+    batch: str,
+    logs: Path,
+    unattended: bool,
+    log_suffix: str = "",
+) -> list[str]:
     """The real import. `-q` is only ever paired with `--quiet-fallback skip`,
-    so a weak match is never applied as-is."""
+    so a weak match is never applied as-is. `-i -R` makes beets skip a folder it
+    already imported and retry one it skipped."""
     cmd = [
         "beet",
         "import",
+        "-i",
+        "-R",
         "-l",
-        str(logs / f"import-{batch}.log"),
+        str(logs / f"import-{batch}{log_suffix}.log"),
         "--set",
         f"musicos_batch={batch}",
     ]
     if unattended:
         cmd += ["-q", "--quiet-fallback", "skip"]
-    return cmd + [str(source)]
+    return cmd + [str(s) for s in sources]
+
+
+def retry_command(skipped: list[Path], batch: str, logs: Path) -> list[str]:
+    """Import the folders an unattended run skipped, with prompts."""
+    return import_command(skipped, batch, logs, unattended=False, log_suffix="-retry")
 
 
 def _raise_on_failure(out: Output) -> None:

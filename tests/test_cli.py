@@ -197,7 +197,7 @@ def test_ingest_prints_the_command_and_does_not_import(
     out = capsys.readouterr().out
     assert code == 0
     assert "Album: x" in out
-    assert "uv run beet import -l " in out
+    assert "uv run beet import -i -R -l " in out
     assert "musicos_batch=20261024-2130-deserted" in out
     assert "-q" not in out
     assert not run.ran_import()
