@@ -1,5 +1,9 @@
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 from musicos.dupes import (
     Release,
@@ -9,6 +13,7 @@ from musicos.dupes import (
     describe,
     find_duplicates,
     normalize,
+    read_tags,
     render_report,
 )
 
@@ -273,3 +278,89 @@ def test_activity_line_counts_folders_groups_and_folders_in_groups() -> None:
         activity_line(groups, 12, WHEN)
         == "2026-10-24 23:40:00 dupes 12 folders checked, 2 groups, 5 folders in groups"
     )
+
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+
+
+def make_audio(path: Path, *extra: str) -> None:
+    """One second of silence with the given ffmpeg options, as a real file."""
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+        ]
+        + ["-t", "1", *extra, str(path)],
+        check=True,
+    )
+
+
+@needs_ffmpeg
+def test_read_tags_reads_a_real_flac(tmp_path: Path) -> None:
+    flac_file = tmp_path / "01.flac"
+    make_audio(
+        flac_file,
+        "-metadata", "album=Oceanic",
+        "-metadata", "artist=Isis",
+        "-metadata", "date=2002-09-24",
+        "-metadata", "discnumber=1/2",
+    )  # fmt: skip
+
+    tags = read_tags(flac_file)
+
+    assert tags is not None
+    assert (tags.album, tags.artist, tags.year, tags.disc) == (
+        "Oceanic",
+        "Isis",
+        "2002",
+        "1",
+    )
+    assert tags.fmt == "FLAC 16/44.1"
+    assert 0.9 < tags.length < 1.1
+
+
+@needs_ffmpeg
+def test_read_tags_prefers_the_album_artist_and_names_an_mp3_by_bitrate(
+    tmp_path: Path,
+) -> None:
+    mp3 = tmp_path / "01.mp3"
+    make_audio(
+        mp3, "-b:a", "128k",
+        "-metadata", "album=Greatest Hits",
+        "-metadata", "artist=Queen",
+        "-metadata", "album_artist=Various Artists",
+    )  # fmt: skip
+
+    tags = read_tags(mp3)
+
+    assert tags is not None
+    assert tags.artist == "Various Artists"
+    assert tags.fmt == "MP3 128k"
+
+
+@needs_ffmpeg
+def test_read_tags_of_an_untagged_file_has_empty_names(tmp_path: Path) -> None:
+    flac_file = tmp_path / "01.flac"
+    make_audio(flac_file)
+
+    tags = read_tags(flac_file)
+
+    assert tags is not None
+    assert (tags.album, tags.artist, tags.year) == ("", "", "")
+    assert tags.disc == "1"
+
+
+def test_read_tags_of_a_file_that_is_not_audio_is_none(tmp_path: Path) -> None:
+    broken = tmp_path / "01.flac"
+    broken.write_bytes(b"this is not a flac file")
+
+    assert read_tags(broken) is None
+
+
+def test_read_tags_of_a_missing_file_is_none(tmp_path: Path) -> None:
+    assert read_tags(tmp_path / "missing.flac") is None

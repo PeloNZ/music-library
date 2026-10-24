@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import mutagen
+
 from musicos.ingest import AUDIO_SUFFIXES
 from musicos.split import cue_track_count, read_cue
 
@@ -222,4 +224,35 @@ def activity_line(groups: list[list[Release]], checked: int, when: datetime) -> 
     return (
         f"{_when(when)} dupes {checked} folders checked, "
         f"{len(groups)} groups, {members} folders in groups"
+    )
+
+
+def read_tags(path: Path) -> Tags | None:
+    """Tags and stream details of one audio file, or None if it cannot be read."""
+    try:
+        audio = mutagen.File(path, easy=True)
+    except (mutagen.MutagenError, OSError):
+        return None
+    if audio is None or audio.info is None:
+        return None
+
+    def first(key: str) -> str:
+        values = audio.get(key) or [""]
+        return str(values[0]).strip()
+
+    info = audio.info
+    suffix = path.suffix.lstrip(".").upper()
+    if hasattr(info, "bits_per_sample") and hasattr(info, "sample_rate"):
+        fmt = f"{suffix} {info.bits_per_sample}/{info.sample_rate / 1000:g}"
+    elif getattr(info, "bitrate", 0):
+        fmt = f"{suffix} {round(info.bitrate / 1000)}k"
+    else:
+        fmt = suffix
+    return Tags(
+        album=first("album"),
+        artist=first("albumartist") or first("artist"),
+        year=first("date")[:4],
+        disc=first("discnumber").split("/")[0] or "1",
+        length=float(info.length),
+        fmt=fmt,
     )

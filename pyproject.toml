@@ -5,6 +5,7 @@ description = "Repair and organise a music library with beets, driven by Claude 
 requires-python = ">=3.12"
 dependencies = [
     "beets[chroma,embedart,fetchart,lastgenre]>=2.14,<3",
+    "mutagen>=1.48.1",
     "pyyaml>=6.0.3",
 ]
 
