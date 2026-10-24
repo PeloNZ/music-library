@@ -1,3 +1,6 @@
+import errno
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -217,3 +220,99 @@ def test_split_never_overwrites_an_existing_album(tmp_path: Path) -> None:
 
     assert (existing / "keep.flac").read_bytes() == b"keep"
     assert rip.flac.exists()
+
+
+def cross_device(monkeypatch: pytest.MonkeyPatch, source: Path) -> None:
+    """Make renaming the source folder fail as it does between two SMB shares."""
+    real_rename = os.rename
+
+    def rename(src: object, dst: object) -> None:
+        if Path(str(src)) == source:
+            raise OSError(errno.EXDEV, "Cross-device link")
+        real_rename(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "rename", rename)
+
+
+def test_a_cross_device_move_copies_verifies_then_removes_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rip = make_rip(tmp_path)
+    (rip.folder / "Scans").mkdir()
+    (rip.folder / "Scans" / "Cover_01.jpg").write_bytes(b"img")
+    cross_device(monkeypatch, rip.folder)
+
+    result = split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+
+    held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
+    assert (held / "Deserted.flac").read_bytes() == b"big"
+    assert (held / "Scans" / "Cover_01.jpg").read_bytes() == b"img"
+    assert not rip.folder.exists()
+    assert not result.source_dir_left
+
+
+def test_a_source_folder_that_cannot_be_removed_is_a_warning_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rip = make_rip(tmp_path)
+    cross_device(monkeypatch, rip.folder)
+    real_rmdir = Path.rmdir
+
+    def rmdir(self: Path) -> None:
+        if self == rip.folder:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", rmdir)
+
+    result = split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+
+    assert result.source_dir_left
+    assert list(rip.folder.iterdir()) == []
+    held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
+    assert (held / "Deserted.flac").read_bytes() == b"big"
+    assert result.holding == held
+
+
+def test_a_failed_copy_leaves_the_source_alone_and_removes_the_partial_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rip = make_rip(tmp_path)
+    cross_device(monkeypatch, rip.folder)
+    real_copyfile = shutil.copyfile
+
+    def copyfile(src: Path, dst: Path) -> object:
+        if str(src).endswith(".flac") and "holding" in str(dst):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copyfile(src, dst)
+
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+
+    with pytest.raises(SplitError, match="source was not moved.*No space left"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+
+    assert rip.flac.read_bytes() == b"big"
+    assert rip.cue.exists()
+    assert not (tmp_path / "holding" / "Gatecreeper-2019-Deserted").exists()
+
+
+def test_a_copy_that_differs_in_size_is_caught_before_anything_is_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rip = make_rip(tmp_path)
+    cross_device(monkeypatch, rip.folder)
+    real_copyfile = shutil.copyfile
+
+    def truncating_copyfile(src: Path, dst: Path) -> object:
+        real_copyfile(src, dst)
+        if str(src).endswith(".flac"):
+            dst.write_bytes(b"bi")  # short copy
+        return dst
+
+    monkeypatch.setattr(shutil, "copyfile", truncating_copyfile)
+
+    with pytest.raises(SplitError, match="size"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+
+    assert rip.flac.read_bytes() == b"big"
+    assert not (tmp_path / "holding" / "Gatecreeper-2019-Deserted").exists()

@@ -1,3 +1,5 @@
+import errno
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -8,7 +10,7 @@ from musicos.cli import main
 from musicos.plex import Response
 from musicos.runner import Output, Run
 from tests.fakes import FakeHttp, Tools
-from tests.test_split import CUE
+from tests.test_split import CUE, cross_device
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"
@@ -1256,3 +1258,69 @@ def test_summary_rescans_once_per_batch(tmp_path: Path) -> None:
         main(["summary", "b1"], env=env, run=Recorder(), now=lambda: NOW, http=http)
 
     assert http.paths().count("/library/sections/5/refresh") == 1
+
+
+def test_split_warns_when_the_emptied_source_folder_cannot_be_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+    source = (tmp_path / "src" / "Deserted").resolve()
+    cross_device(monkeypatch, source)
+    real_rmdir = Path.rmdir
+
+    def rmdir(self: Path) -> None:
+        if self == source:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", rmdir)
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"WARN Deserted: could not remove the emptied source folder {source}" in out
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["source_dir_left"] is True
+
+
+def test_split_reports_a_file_system_error_as_a_failure_and_carries_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Bad", "Good")
+    bad = (tmp_path / "src" / "Bad").resolve()
+    real_rename = os.rename
+
+    def rename(src: object, dst: object) -> None:
+        if Path(str(src)) == bad:
+            raise OSError(errno.EIO, "Input/output error")
+        real_rename(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "rename", rename)
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL Bad: " in out and "Input/output error" in out
+    assert (tmp_path / "holding" / "Good").exists()

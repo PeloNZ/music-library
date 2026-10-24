@@ -288,6 +288,9 @@ def split(
             print(f"FAIL {label}: {exc}")
             failed = True
             continue
+        extra: dict[str, Any] = (
+            {"source_dir_left": True} if result.source_dir_left else {}
+        )
         record(
             Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
             "split",
@@ -298,7 +301,12 @@ def split(
             track_count=result.track_count,
             tracks=[str(t) for t in result.tracks],
             holding=str(result.holding),
+            **extra,
         )
+        if result.source_dir_left:
+            print(
+                f"WARN {label}: could not remove the emptied source folder {rip.folder}"
+            )
         print(f"ok   {label}: {result.track_count} tracks in {inbox / rip.folder.name}")
     return 1 if failed else 0
 
