@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -19,7 +18,7 @@ import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.batch import plan_batch
-from musicos.candidates import list_candidates, record_candidates
+from musicos.candidates import list_candidates, record_candidates, status_of
 from musicos.changelog import (
     filter_entries,
     format_entry,
@@ -51,10 +50,12 @@ from musicos.gaps import render_report as render_gaps_report
 from musicos.ingest import (
     batch_items,
     dry_run_command,
+    entry_folders,
     has_audio,
+    held_folders,
     import_command,
     make_batch_id,
-    parse_import_log,
+    read_import_logs,
     retry_command,
     summarize_batch,
 )
@@ -174,18 +175,12 @@ def report_batch(
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:
         print(f"  - {a.get('albumartist', '?')} - {a.get('album', '?')}")
-    import_log = logs_dir(env) / f"import-{batch}.log"
-    logged = parse_import_log(import_log.read_text()) if import_log.exists() else []
+    logged = read_import_logs(logs_dir(env), batch)
     if logged:
         print(f"{len(logged)} logged by the importer (not imported as matched):")
         for entry in logged:
             print(f"  {entry.kind}: {entry.path}")
-    skipped = [
-        Path(folder)
-        for e in logged
-        if e.kind == "skip"
-        for folder in re.split(r"; (?=/)", e.path)  # beets joins an album's folders
-    ]
+    skipped = [p for e in logged if e.kind == "skip" for p in entry_folders(e)]
     if skipped:
         print("Decide the skipped albums in your own terminal. Beets asks for each:")
         print(f"  {user_command(env, retry_command(skipped, batch, logs_dir(env)))}")
@@ -256,6 +251,23 @@ def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -
     print(f"ok   plex rescan started: {section.title} ({section.id})")
 
 
+def show_dry_run(run: Run, sources: list[Path], incremental: bool = False) -> bool:
+    out = run(dry_run_command(sources, incremental))
+    if out.code != 0:
+        print(f"FAIL dry run: {first_error(out)}")
+        return False
+    # beets prints the --pretend file list to stderr
+    print(out.stderr or out.stdout, end="")
+    return True
+
+
+def run_import(run: Run, cmd: list[str]) -> bool:
+    out = run(cmd)
+    if out.code != 0:
+        print(f"FAIL import: {first_error(out)}")
+    return out.code == 0
+
+
 def ingest(
     env: Mapping[str, str],
     run: Run,
@@ -272,34 +284,32 @@ def ingest(
     batch = make_batch_id(when, source)
     logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
-    dry_run = run(dry_run_command([source]))
-    if dry_run.code != 0:
-        print(f"FAIL dry run: {first_error(dry_run)}")
+    if not show_dry_run(run, [source]):
         return 1
-    # beets prints the --pretend file list to stderr
-    print(dry_run.stderr or dry_run.stdout, end="")
     cmd = import_command([source], batch, logs, unattended)
     if not unattended:
         print("Run this in your own terminal. The match prompts need one:")
         print(f"  {user_command(env, cmd)}")
         print(f"Then: {user_command(env, ['musicos', 'summary', batch])}")
         return 0
-    out = run(cmd)
-    if out.code != 0:
-        print(f"FAIL import: {first_error(out)}")
+    if not run_import(run, cmd):
         return 1
     return report_batch(env, run, batch, when, source, http, refresh_plex)
 
 
-def held_folders(run: Run) -> set[str]:
-    """The album folders beets already holds."""
-    out = run(["beet", "ls", "-a", "-f", "$path"])
-    if out.code != 0:
-        raise RuntimeError(first_error(out))
-    return {line for line in out.stdout.splitlines() if line.strip()}
+def root_ok(root: Path, run: Run) -> bool:
+    """Print why and return False unless `root` is a folder on a mounted share."""
+    share = check_share(str(root), run)
+    if not share.ok:
+        print_results([share])
+        return False
+    if not root.is_dir():
+        print(f"FAIL root: {root} is not a folder")
+        return False
+    return True
 
 
-def batch(
+def batch_command(
     env: Mapping[str, str],
     args: argparse.Namespace,
     when: datetime,
@@ -307,14 +317,8 @@ def batch(
     run: Run,
     http: Get = http_get,
 ) -> int:
-    """Import every kept album of one artist folder in one unattended run."""
     root: Path = args.root.resolve()
-    share = check_share(str(root), run)
-    if not share.ok:
-        print_results([share])
-        return 1
-    if not root.is_dir():
-        print(f"FAIL root: {root} is not a folder")
+    if not root_ok(root, run):
         return 1
     try:
         held = held_folders(run)
@@ -330,10 +334,11 @@ def batch(
     record_candidates(
         candidates_log, [d for g in groups for d in decide(g)], root, when
     )
+    wanted = {str(r.folder) for r in releases}
     status = {
-        e["folder"]: s
-        for e, s in list_candidates(candidates_log)
-        if s in ("open", "stale")
+        e["folder"]: status_of(e, lambda root: True)  # root_ok checked the share
+        for e in read_entries(candidates_log)
+        if e["folder"] in wanted
     }
     plan = plan_batch(releases, groups, status)
     print(f"{len(folders) - len(releases)} folders already in beets")
@@ -354,16 +359,15 @@ def batch(
     sources = [r.folder for r in plan.kept]
     for source in sources:
         print(f"  {source}")
-    dry_run = run(dry_run_command(sources))
-    if dry_run.code != 0:
-        print(f"FAIL dry run: {first_error(dry_run)}")
+    if not show_dry_run(run, sources, incremental=True):
         return 1
-    print(dry_run.stderr or dry_run.stdout, end="")
     if not args.apply:
         print("dry run: nothing imported. Add --apply to import.")
         return 0
     batch_id = make_batch_id(when, root)
-    out = run(import_command(sources, batch_id, logs, unattended=True))
+    out = run(
+        import_command(sources, batch_id, logs, unattended=True, incremental=True)
+    )
     if out.code != 0:
         print(f"FAIL import: {first_error(out)}")
         return 1
@@ -596,12 +600,7 @@ def dupes(
     run: Run,
 ) -> int:
     root: Path = args.root.resolve()
-    share = check_share(str(root), run)
-    if not share.ok:
-        print_results([share])
-        return 1
-    if not root.is_dir():
-        print(f"FAIL root: {root} is not a folder")
+    if not root_ok(root, run):
         return 1
     if not beetsdir_ok(env):
         return 1  # the report is written under BEETSDIR
@@ -806,7 +805,7 @@ def main(
             not args.no_plex_refresh,
         )
     if args.command == "batch":
-        return batch(env, args, now(), tag_reader, run, http)
+        return batch_command(env, args, now(), tag_reader, run, http)
     if args.command == "split":
         return split(env, run, now(), args, which)
     if args.command == "summary":

@@ -26,10 +26,20 @@ def make_batch_id(when: datetime, source: Path) -> str:
     return f"{when:%Y%m%d-%H%M}-{slug or 'import'}"
 
 
-def dry_run_command(sources: list[Path]) -> list[str]:
-    """Lists the files beets would import, leaving out folders it imported before.
-    It does not show matches."""
-    return ["beet", "import", "--pretend", "-i", *map(str, sources)]
+def dry_run_command(sources: list[Path], incremental: bool = False) -> list[str]:
+    """Lists the files beets would import. It does not show matches. With
+    `incremental`, folders beets imported before are left out."""
+    return [
+        "beet",
+        "import",
+        "--pretend",
+        *(["-i"] if incremental else []),
+        *map(str, sources),
+    ]
+
+
+def log_path(logs: Path, batch: str, suffix: str = "") -> Path:
+    return logs / f"import-{batch}{suffix}.log"
 
 
 def import_command(
@@ -38,28 +48,32 @@ def import_command(
     logs: Path,
     unattended: bool,
     log_suffix: str = "",
+    incremental: bool = False,
 ) -> list[str]:
     """The real import. `-q` is only ever paired with `--quiet-fallback skip`,
-    so a weak match is never applied as-is. `-i -R` makes beets skip a folder it
-    already imported and retry one it skipped."""
-    cmd = [
-        "beet",
-        "import",
-        "-i",
-        "-R",
-        "-l",
-        str(logs / f"import-{batch}{log_suffix}.log"),
-        "--set",
-        f"musicos_batch={batch}",
-    ]
+    so a weak match is never applied as-is. With `incremental`, `-i -R` makes
+    beets skip a folder it already imported and retry one it skipped."""
+    cmd = ["beet", "import", *(["-i", "-R"] if incremental else [])]
+    cmd += ["-l", str(log_path(logs, batch, log_suffix))]
+    cmd += ["--set", f"musicos_batch={batch}"]
     if unattended:
         cmd += ["-q", "--quiet-fallback", "skip"]
     return cmd + [str(s) for s in sources]
 
 
+RETRY_SUFFIX = "-retry"
+
+
 def retry_command(skipped: list[Path], batch: str, logs: Path) -> list[str]:
     """Import the folders an unattended run skipped, with prompts."""
-    return import_command(skipped, batch, logs, unattended=False, log_suffix="-retry")
+    return import_command(
+        skipped,
+        batch,
+        logs,
+        unattended=False,
+        log_suffix=RETRY_SUFFIX,
+        incremental=True,
+    )
 
 
 def _raise_on_failure(out: Output) -> None:
@@ -115,6 +129,13 @@ def batch_items(run: Run, batch: str) -> list[str]:
     return [line for line in out.stdout.splitlines() if line.strip()]
 
 
+def held_folders(run: Run) -> set[str]:
+    """The album folders beets holds. In copy mode these are library folders, never import sources."""
+    out = run(["beet", "ls", "-a", "-f", "$path"])
+    _raise_on_failure(out)
+    return {line for line in out.stdout.splitlines() if line.strip()}
+
+
 LOG_KINDS = (
     "skip",
     "asis",
@@ -138,3 +159,21 @@ def parse_import_log(text: str) -> list[LogEntry]:
         if kind in LOG_KINDS and path:
             entries.append(LogEntry(kind, path))
     return entries
+
+
+def read_import_logs(logs: Path, batch: str) -> list[LogEntry]:
+    """What the importer logged for a batch. A retry log replaces the first run's skips."""
+    first, retry = log_path(logs, batch), log_path(logs, batch, RETRY_SUFFIX)
+    entries = parse_import_log(first.read_text()) if first.exists() else []
+    if retry.exists():
+        entries = [e for e in entries if e.kind != "skip"]
+        entries += parse_import_log(retry.read_text())
+    return entries
+
+
+def entry_folders(entry: LogEntry) -> list[Path]:
+    """The folders of a log entry. beets joins the folders of one album with
+    "; ", so a path that exists as written is one folder."""
+    if Path(entry.path).is_dir():
+        return [Path(entry.path)]
+    return [Path(p) for p in re.split(r"; (?=/)", entry.path)]

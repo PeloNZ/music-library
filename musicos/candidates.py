@@ -56,7 +56,7 @@ def record_candidates(
 Mounted = Callable[[str], bool]
 
 
-def status_of(entry: Entry, mounted: Mounted = lambda root: True) -> str:
+def status_of(entry: Entry, mounted: Mounted) -> str:
     if not mounted(entry["root"]):
         return "unknown"
     if not Path(entry["folder"]).exists():
@@ -67,7 +67,7 @@ def status_of(entry: Entry, mounted: Mounted = lambda root: True) -> str:
 
 
 def list_candidates(
-    path: Path, include_done: bool = False, mounted: Mounted = lambda root: True
+    path: Path, mounted: Mounted, include_done: bool = False
 ) -> list[tuple[Entry, str]]:
     """Every entry with its status, in log order. Done ones only on request."""
     entries = [(e, status_of(e, mounted)) for e in read_entries(path)]

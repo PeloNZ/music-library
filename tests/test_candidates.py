@@ -9,6 +9,10 @@ from tests.test_dupes import rel
 WHEN = datetime(2026, 10, 24, 23, 50, 0)
 
 
+def mounted(root: str) -> bool:
+    return True
+
+
 def make(tmp_path: Path) -> tuple[Path, Path, Path]:
     """A split copy (kept), a cue rip and an mp3 copy (candidates), on disk."""
     split = tmp_path / "Isis" / "(2000) Celestial"
@@ -79,7 +83,7 @@ def test_a_candidate_is_open_while_it_and_what_outranks_it_exist(
     log = tmp_path / "logs" / "deletion-candidates.jsonl"
     record_candidates(log, decisions(split, rip, mp3), tmp_path, WHEN)
 
-    assert [status_of(e) for e in read_entries(log)] == ["open", "open"]
+    assert [status_of(e, mounted) for e in read_entries(log)] == ["open", "open"]
 
 
 def test_a_candidate_is_done_when_its_folder_is_gone(tmp_path: Path) -> None:
@@ -89,7 +93,7 @@ def test_a_candidate_is_done_when_its_folder_is_gone(tmp_path: Path) -> None:
     (rip / "a.flac").unlink()
     rip.rmdir()
 
-    assert [status_of(e) for e in read_entries(log)] == ["done", "open"]
+    assert [status_of(e, mounted) for e in read_entries(log)] == ["done", "open"]
 
 
 def test_a_candidate_is_stale_when_the_copy_that_outranked_it_is_gone(
@@ -101,7 +105,7 @@ def test_a_candidate_is_stale_when_the_copy_that_outranked_it_is_gone(
     (split / "a.flac").unlink()
     split.rmdir()
 
-    assert [status_of(e) for e in read_entries(log)] == ["stale", "stale"]
+    assert [status_of(e, mounted) for e in read_entries(log)] == ["stale", "stale"]
 
 
 def test_a_candidate_stays_open_while_one_of_two_tied_keepers_remains(
@@ -120,12 +124,12 @@ def test_a_candidate_stays_open_while_one_of_two_tied_keepers_remains(
     (second / "a.flac").unlink()
     second.rmdir()
 
-    assert [status_of(e) for e in read_entries(log)] == ["open"]
+    assert [status_of(e, mounted) for e in read_entries(log)] == ["open"]
 
     (first / "a.flac").unlink()
     first.rmdir()
 
-    assert [status_of(e) for e in read_entries(log)] == ["stale"]
+    assert [status_of(e, mounted) for e in read_entries(log)] == ["stale"]
 
 
 def test_list_candidates_hides_done_ones_unless_asked(tmp_path: Path) -> None:
@@ -135,15 +139,15 @@ def test_list_candidates_hides_done_ones_unless_asked(tmp_path: Path) -> None:
     (mp3 / "a.flac").unlink()
     mp3.rmdir()
 
-    open_now = list_candidates(log)
-    everything = list_candidates(log, include_done=True)
+    open_now = list_candidates(log, mounted)
+    everything = list_candidates(log, mounted, include_done=True)
 
     assert [(e["folder"], s) for e, s in open_now] == [(str(rip), "open")]
     assert [s for _, s in everything] == ["open", "done"]
 
 
 def test_list_candidates_of_a_missing_log_is_empty(tmp_path: Path) -> None:
-    assert list_candidates(tmp_path / "none.jsonl") == []
+    assert list_candidates(tmp_path / "none.jsonl", mounted) == []
 
 
 def test_a_candidate_on_an_unmounted_share_is_unknown_and_always_listed(
@@ -159,6 +163,6 @@ def test_a_candidate_on_an_unmounted_share_is_unknown_and_always_listed(
         kept_by=["/Volumes/gone/Isis/(2000) Celestial"],
     )
 
-    listed = list_candidates(log, mounted=lambda root: False)
+    listed = list_candidates(log, lambda root: False)
 
     assert [s for _, s in listed] == ["unknown"]

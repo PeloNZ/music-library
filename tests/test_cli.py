@@ -197,7 +197,7 @@ def test_ingest_prints_the_command_and_does_not_import(
     out = capsys.readouterr().out
     assert code == 0
     assert "Album: x" in out
-    assert f"BEETSDIR={beets} uv run beet import -i -R -l " in out
+    assert f"BEETSDIR={beets} uv run beet import -l " in out
     assert "musicos_batch=20261024-2130-deserted" in out
     assert "-q" not in out
     assert not run.ran_import()
@@ -519,6 +519,37 @@ def test_summary_retries_each_folder_of_a_skip_line_that_names_several(
 
     out = capsys.readouterr().out
     assert "--set musicos_batch=b1 /inbox/Isis/CD1 /inbox/Isis/CD2" in out
+
+
+def test_summary_after_a_retry_lists_only_the_albums_still_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    write_import_log(beets, "b1", "skip /inbox/A\nskip /inbox/B\n")
+    (beets / "logs" / "import-b1-retry.log").write_text("skip /inbox/B\n")
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    assert "  skip: /inbox/B" in out
+    assert "/inbox/A" not in out
+    assert "--set musicos_batch=b1 /inbox/B\n" in out
+
+
+def test_summary_keeps_a_folder_whose_name_ends_in_a_semicolon_whole(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    odd = tmp_path / "Foo; " / "Album"
+    odd.mkdir(parents=True)
+    write_import_log(beets, "b1", f"skip {odd}\n")
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    assert f"--set musicos_batch=b1 '{odd}'\n" in out
 
 
 def test_summary_with_nothing_skipped_prints_no_retry_command(
@@ -1656,15 +1687,6 @@ def test_dupes_says_when_there_are_none(
     assert "No duplicate albums found." in capsys.readouterr().out
 
 
-def test_dupes_stops_when_the_root_is_not_a_folder(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    code = main(["dupes", str(tmp_path / "missing")], env={}, tag_reader=isis_tags)
-
-    assert code == 1
-    assert "FAIL root: " in capsys.readouterr().out
-
-
 def test_dupes_needs_beetsdir_for_its_report(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1763,16 +1785,17 @@ def test_candidates_needs_beetsdir(capsys: pytest.CaptureFixture[str]) -> None:
     assert "FAIL beetsdir" in capsys.readouterr().out
 
 
-def test_dupes_refuses_a_root_on_a_share_that_is_not_mounted(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("command", ["dupes", "batch"])
+def test_a_root_on_a_share_that_is_not_mounted_is_refused(
+    command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     beets = tmp_path / "beets"
     beets.mkdir()
 
     code = main(
-        ["dupes", "/Volumes/gone/Isis"],
+        [command, "/Volumes/gone/Isis"],
         env=make_beetsdir(beets),
-        run=lambda cmd: Output(MOUNTS, "", 0),
+        run=BatchRun(),
         tag_reader=isis_tags,
     )
 
@@ -1780,6 +1803,24 @@ def test_dupes_refuses_a_root_on_a_share_that_is_not_mounted(
     assert "FAIL mount: nothing is mounted at /Volumes/gone/Isis" in (
         capsys.readouterr().out
     )
+
+
+@pytest.mark.parametrize("command", ["dupes", "batch"])
+def test_a_root_that_is_not_a_folder_is_refused(
+    command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        [command, str(tmp_path / "missing")],
+        env=make_beetsdir(beets),
+        run=BatchRun(),
+        tag_reader=isis_tags,
+    )
+
+    assert code == 1
+    assert "FAIL root: " in capsys.readouterr().out
 
 
 def test_candidates_on_an_unmounted_share_are_unknown_not_done(
@@ -1966,39 +2007,3 @@ def test_batch_reports_a_failed_import(
 
     assert code == 1
     assert "FAIL import: import failed" in capsys.readouterr().out
-
-
-def test_batch_refuses_a_root_on_a_share_that_is_not_mounted(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    beets = tmp_path / "beets"
-    beets.mkdir()
-
-    code = main(
-        ["batch", "/Volumes/gone/Isis"],
-        env=make_beetsdir(beets),
-        run=BatchRun(),
-        tag_reader=isis_tags,
-    )
-
-    assert code == 1
-    assert "FAIL mount: nothing is mounted at /Volumes/gone/Isis" in (
-        capsys.readouterr().out
-    )
-
-
-def test_batch_stops_when_the_root_is_not_a_folder(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    beets = tmp_path / "beets"
-    beets.mkdir()
-
-    code = main(
-        ["batch", str(tmp_path / "missing")],
-        env=make_beetsdir(beets),
-        run=BatchRun(),
-        tag_reader=isis_tags,
-    )
-
-    assert code == 1
-    assert "FAIL root: " in capsys.readouterr().out

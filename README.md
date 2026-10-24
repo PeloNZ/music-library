@@ -129,7 +129,7 @@ One artist folder is one batch. Deleting is the last step.
 | A kept FLAC + cue rip | left out: split it first |
 | Beets already holds the folder | left out |
 
-It prints the folders, the size that copy mode adds, and the `beet import --pretend` list. `--apply` runs one `beet import -i -R -q --quiet-fallback skip`. Strong matches apply. A weak match is skipped and logged, never guessed. `-i` skips a folder beets imported before, and `-R` retries a skipped one, so running `batch` again after you fix a decision imports only what is left. The preview skips imported folders too, but the list of folders still names them.
+It prints the folders, the size that copy mode adds, and the `beet import --pretend` list. `--apply` runs one `beet import -i -R -q --quiet-fallback skip`. Strong matches apply. A weak match is skipped and logged, never guessed. `-i` skips a folder beets imported before, and `-R` retries a skipped one, so running `batch` again after you fix a decision imports only what is left. The preview skips imported folders too, but the list of folders and the size still count them. beets keeps a history of imported folders in `beetsdir/state.pickle`: to import a folder again after you remove it from beets, run `beet import -I` on it. `ingest` does not use `-i`.
 
 Known limit: a multi-disc album in `CD1/` and `CD2/` folders is passed to beets as two folders. Import it with `ingest` on its parent folder.
 

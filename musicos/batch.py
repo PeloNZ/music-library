@@ -26,11 +26,7 @@ class BatchPlan:
 def plan_batch(
     releases: list[Release], groups: list[list[Release]], status: dict[str, str]
 ) -> BatchPlan:
-    """`status` maps a folder to its deletion candidate status: open or stale.
-
-    An open candidate is left out. A group with one copy left imports that
-    copy. A group with several copies left imports none: the user picks one.
-    """
+    """`status` maps a folder to its deletion candidate status: open or stale."""
     plan = BatchPlan()
     in_group = {r.folder for g in groups for r in g}
     pending = [[r] for r in releases if r.folder not in in_group] + groups
