@@ -502,3 +502,18 @@ def test_ingest_records_the_source_as_an_absolute_path(
 
     (entry,) = read_entries(beets / "logs" / "changes.jsonl")
     assert entry["source"] == str(source.resolve())
+
+
+def test_rerunning_summary_does_not_record_the_import_twice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    env = make_beetsdir(beets)
+
+    main(["summary", "b1"], env=env, run=Recorder(), now=lambda: NOW)
+    code = main(["summary", "b1"], env=env, run=Recorder(), now=lambda: NOW)
+
+    assert code == 0
+    assert len(read_entries(beets / "logs" / "changes.jsonl")) == 1
+    assert "already in the change log" in capsys.readouterr().out

@@ -110,16 +110,24 @@ def report_batch(
     fields: dict[str, Any] = {"batch": batch}
     if source is not None:
         fields["source"] = str(source)
-    record(
-        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
-        "import",
-        when,
-        **fields,
-        albums=summary.albums,
-        flagged=flagged,
-        skipped=[{"kind": e.kind, "path": e.path} for e in logged],
-        items=items,
+    changes = Path(env["BEETSDIR"]) / "logs" / "changes.jsonl"
+    already = any(
+        e["action"] == "import" and e.get("batch") == batch
+        for e in read_entries(changes)
     )
+    if already:
+        print("import already in the change log; not recorded again")
+    else:
+        record(
+            changes,
+            "import",
+            when,
+            **fields,
+            albums=summary.albums,
+            flagged=flagged,
+            skipped=[{"kind": e.kind, "path": e.path} for e in logged],
+            items=items,
+        )
     log_activity(
         env,
         f"{when:%Y-%m-%d %H:%M:%S} ingest {batch} {summary.albums} albums, {flagged} flagged",
