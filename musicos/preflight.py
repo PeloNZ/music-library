@@ -63,13 +63,3 @@ def configured_plugins(config: Mapping[str, Any]) -> list[str]:
     """The `plugins:` entry, which beets accepts as a string or a list."""
     plugins = config.get("plugins", "")
     return plugins.split() if isinstance(plugins, str) else list(plugins)
-
-
-def check_acoustid(config: Mapping[str, Any]) -> Result:
-    """The chroma plugin needs a real AcoustID key, not the template value."""
-    if "chroma" not in configured_plugins(config):
-        return Result("acoustid", True, "chroma is not enabled")
-    key = (config.get("acoustid") or {}).get("apikey")
-    if not key or key == "CHANGE-ME":
-        return Result("acoustid", False, "set acoustid: apikey: in config.yaml")
-    return Result("acoustid", True, "apikey is set")

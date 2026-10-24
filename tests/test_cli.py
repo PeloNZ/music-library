@@ -10,10 +10,9 @@ MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"
 
 
-def make_beetsdir(tmp_path: Path, key: str = "") -> dict[str, str]:
-    acoustid = f"acoustid:\n  apikey: {key}\n" if key else ""
+def make_beetsdir(tmp_path: Path) -> dict[str, str]:
     (tmp_path / "config.yaml").write_text(
-        "directory: /Volumes/music\nplugins: chroma missing\n" + acoustid
+        "directory: /Volumes/music\nplugins: chroma missing\n"
     )
     return {"BEETSDIR": str(tmp_path)}
 
@@ -176,7 +175,7 @@ def test_ingest_prints_the_command_and_does_not_import(
 
     code = main(
         ["ingest", str(make_source(tmp_path))],
-        env=make_beetsdir(beets, key="k3y"),
+        env=make_beetsdir(beets),
         run=run,
         now=lambda: NOW,
     )
@@ -190,25 +189,6 @@ def test_ingest_prints_the_command_and_does_not_import(
     assert not run.ran_import()
 
 
-def test_ingest_stops_when_the_acoustid_key_is_not_set(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    beets = tmp_path / "beets"
-    beets.mkdir()
-    run = Recorder()
-
-    code = main(
-        ["ingest", str(make_source(tmp_path))],
-        env=make_beetsdir(beets),
-        run=run,
-        now=lambda: NOW,
-    )
-
-    assert code == 1
-    assert "FAIL acoustid" in capsys.readouterr().out
-    assert not run.ran_import()
-
-
 def test_ingest_stops_when_the_source_has_no_audio(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -219,7 +199,7 @@ def test_ingest_stops_when_the_source_has_no_audio(
 
     code = main(
         ["ingest", str(empty)],
-        env=make_beetsdir(beets, key="k3y"),
+        env=make_beetsdir(beets),
         run=Recorder(),
         now=lambda: NOW,
     )
@@ -237,7 +217,7 @@ def test_unattended_ingest_imports_summarises_and_logs(
 
     code = main(
         ["ingest", str(make_source(tmp_path)), "--unattended"],
-        env=make_beetsdir(beets, key="k3y"),
+        env=make_beetsdir(beets),
         run=run,
         now=lambda: NOW,
     )
@@ -259,7 +239,7 @@ def test_unattended_ingest_reports_a_failed_import(
 
     code = main(
         ["ingest", str(make_source(tmp_path)), "--unattended"],
-        env=make_beetsdir(beets, key="k3y"),
+        env=make_beetsdir(beets),
         run=Recorder(import_code=1),
         now=lambda: NOW,
     )
@@ -277,7 +257,7 @@ def test_summary_reads_a_finished_batch_and_logs(
 
     code = main(
         ["summary", "20261024-2130-deserted"],
-        env=make_beetsdir(beets, key="k3y"),
+        env=make_beetsdir(beets),
         run=Recorder(),
         now=lambda: NOW,
     )

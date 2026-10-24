@@ -23,7 +23,6 @@ from musicos.ingest import (
 from musicos.lint import activity_line, render_report, run_lint
 from musicos.preflight import (
     Result,
-    check_acoustid,
     check_beetsdir,
     check_mount,
     check_plugins,
@@ -97,8 +96,6 @@ def report_batch(env: Mapping[str, str], run: Run, batch: str, when: datetime) -
 def ingest(
     env: Mapping[str, str], run: Run, when: datetime, source: Path, unattended: bool
 ) -> int:
-    if not print_results([check_acoustid(load_config(env))]):
-        return 1
     if not source.is_dir() or not has_audio(source):
         print(f"FAIL source: no audio files under {source}")
         return 1
