@@ -18,7 +18,8 @@ def runner(**outputs: Output) -> Run:
     by_command = {tuple(cmd): name for name, cmd in CHECKS}
 
     def run(cmd: list[str]) -> Output:
-        return outputs.get(by_command[tuple(cmd)], Output("", "", 0))
+        name = by_command.get(tuple(cmd))
+        return outputs.get(name, Output("", "", 0)) if name else Output("", "", 0)
 
     return run
 
@@ -30,7 +31,8 @@ def result(results: list[CheckResult], name: str) -> CheckResult:
 def test_clean_library_has_no_findings() -> None:
     results = run_lint(runner())
 
-    assert [r.count for r in results] == [0] * len(CHECKS)
+    assert len(results) == len(CHECKS) + 1  # plus path case mismatches
+    assert [r.count for r in results] == [0] * len(results)
     assert all(r.error is None for r in results)
 
 
@@ -128,3 +130,60 @@ def test_activity_line_counts_issues_and_categories() -> None:
         activity_line(FINDINGS, WHEN)
         == "2026-10-24 21:30:05 lint 2 issues across 1 categories"
     )
+
+
+def library_paths(unimported: str, db_paths: str) -> Run:
+    def run(cmd: list[str]) -> Output:
+        if cmd == ["beet", "unimported"]:
+            return Output(unimported, "", 0)
+        if cmd == ["beet", "ls", "-f", "$path"]:
+            return Output(db_paths, "", 0)
+        return Output("", "", 0)
+
+    return run
+
+
+def test_a_path_that_differs_from_the_database_only_in_case_is_not_unimported() -> None:
+    run = library_paths(
+        unimported="/lib/Cake/1996 - Fashion Nugget/01 Frank Sinatra.mp3\n",
+        db_paths="/lib/CAKE/1996 - Fashion Nugget/01 Frank Sinatra.mp3\n",
+    )
+
+    results = run_lint(run)
+
+    assert result(results, "unimported files").count == 0
+    mismatch = result(results, "path case mismatches")
+    assert mismatch.count == 1
+    assert mismatch.examples == ["/lib/Cake/1996 - Fashion Nugget/01 Frank Sinatra.mp3"]
+
+
+def test_a_file_missing_from_the_database_stays_unimported() -> None:
+    run = library_paths(
+        unimported="/lib/Cake/cover.jpg\n/lib/Cake/x.mp3\n",
+        db_paths="/lib/CAKE/x.mp3\n",
+    )
+
+    results = run_lint(run)
+
+    assert result(results, "unimported files").examples == ["/lib/Cake/cover.jpg"]
+    assert result(results, "path case mismatches").count == 1
+
+
+def test_a_failing_path_listing_is_reported_on_the_unimported_check() -> None:
+    def run(cmd: list[str]) -> Output:
+        if cmd == ["beet", "ls", "-f", "$path"]:
+            return Output("", "error: db locked\n", 1)
+        return Output("/lib/a.mp3\n" if cmd == ["beet", "unimported"] else "", "", 0)
+
+    results = run_lint(run)
+
+    assert result(results, "unimported files").error == "error: db locked"
+
+
+def test_accents_written_two_ways_count_as_the_same_path() -> None:
+    nfc, nfd = "/lib/Mot\u00f6rhead/a.mp3", "/lib/Moto\u0308rhead/a.mp3"
+
+    results = run_lint(library_paths(unimported=nfc + "\n", db_paths=nfd + "\n"))
+
+    assert result(results, "unimported files").count == 0
+    assert result(results, "path case mismatches").count == 1
