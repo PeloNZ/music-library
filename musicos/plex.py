@@ -110,3 +110,11 @@ class Plex:
     def refresh(self, section_id: str) -> None:
         """Start a rescan of one library. Plex scans in the background."""
         self._request(f"/library/sections/{section_id}/refresh")
+
+
+def plex_from_env(env: Mapping[str, str], get: Get = http_get) -> Plex:
+    """A client from PLEX_URL and PLEX_TOKEN. An error names the setting only."""
+    for name in ("PLEX_URL", "PLEX_TOKEN"):
+        if not env.get(name):
+            raise PlexError(f"{name} is not set")
+    return Plex(env["PLEX_URL"], env["PLEX_TOKEN"], get)

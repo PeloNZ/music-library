@@ -27,6 +27,7 @@ from musicos.ingest import (
     summarize_batch,
 )
 from musicos.lint import activity_line, render_report, run_lint
+from musicos.plex import Get, PlexError, choose_section, http_get, plex_from_env
 from musicos.preflight import (
     Result,
     check_beetsdir,
@@ -238,6 +239,46 @@ def split(
     return 1 if failed else 0
 
 
+def plex_command(
+    env: Mapping[str, str], args: argparse.Namespace, when: datetime, http: Get
+) -> int:
+    refreshing = args.plex_command == "refresh"
+    if refreshing and not print_results_if_failed([check_beetsdir(env)]):
+        return 1  # a rescan is a change, so it must be logged
+    try:
+        plex = plex_from_env(env, http)
+        sections = plex.sections()
+        if not refreshing:
+            for section in sections:
+                print(f"{section.id}  {section.type}  {section.title}")
+                for path in section.locations:
+                    print(f"     {path}")
+            return 0
+        section = choose_section(sections, args.section or env.get("PLEX_SECTION"))
+        plex.refresh(section.id)
+    except PlexError as exc:
+        print(f"FAIL plex: {exc}")
+        return 1
+    record(
+        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        "plex-refresh",
+        when,
+        section=section.id,
+        title=section.title,
+        locations=section.locations,
+    )
+    print(f"ok   rescan started: {section.title} ({section.id})")
+    return 0
+
+
+def print_results_if_failed(results: list[Result]) -> bool:
+    """Print only failures. True when every result passed."""
+    failed = [r for r in results if not r.ok]
+    if failed:
+        print_results(failed)
+    return not failed
+
+
 def main(
     argv: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
@@ -245,6 +286,7 @@ def main(
     now: Callable[[], datetime] = datetime.now,
     which: Callable[[str], str | None] = shutil.which,
     env_file: Path = ENV_FILE,
+    http: Get = http_get,
 ) -> int:
     if env is None:
         try:
@@ -274,6 +316,13 @@ def main(
     split_parser.add_argument(
         "--apply", action="store_true", help="split (default is a dry run)"
     )
+    plex_parser = commands.add_parser("plex", help="list or rescan Plex libraries")
+    plex_commands = plex_parser.add_subparsers(dest="plex_command", required=True)
+    plex_commands.add_parser("sections", help="list libraries and their folders")
+    refresh_parser = plex_commands.add_parser("refresh", help="rescan a music library")
+    refresh_parser.add_argument(
+        "--section", help="library id or title (or set PLEX_SECTION)"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -284,6 +333,8 @@ def main(
 
     if args.command == "log":
         return show_log(env, args)
+    if args.command == "plex":
+        return plex_command(env, args, now(), http)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":

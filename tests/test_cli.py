@@ -5,8 +5,9 @@ import pytest
 
 from musicos.changelog import read_entries, record
 from musicos.cli import main
+from musicos.plex import Response
 from musicos.runner import Output, Run
-from tests.fakes import Tools
+from tests.fakes import FakeHttp, Tools
 from tests.test_split import CUE
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
@@ -748,3 +749,136 @@ def test_main_reports_a_bad_env_file_without_echoing_it(
     assert code == 1
     assert "FAIL env: " in out and "line 1" in out
     assert "my-secret-token" not in out
+
+
+TOKEN = "s3cr3t-token"
+PLEX_ENV = {"PLEX_URL": "http://192.168.0.63:32400", "PLEX_TOKEN": TOKEN}
+TWO_MUSIC = (
+    '{"MediaContainer": {"Directory": ['
+    '{"key": "6", "type": "artist", "title": "Audiobook", '
+    '"Location": [{"id": 9, "path": "/data/audiobooks"}]},'
+    '{"key": "5", "type": "artist", "title": "Music", '
+    '"Location": [{"id": 5, "path": "/data/music"}]},'
+    '{"key": "1", "type": "movie", "title": "Movies", '
+    '"Location": [{"id": 7, "path": "/data/movies"}, {"id": 1, "path": "/data/movies2"}]}'
+    "]}}"
+)
+
+
+def plex_http() -> FakeHttp:
+    return FakeHttp(routes={"/library/sections": Response(200, TWO_MUSIC)})
+
+
+def test_plex_sections_lists_each_library_with_its_folders(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(["plex", "sections"], env=PLEX_ENV, http=plex_http())
+
+    assert code == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "6  artist  Audiobook",
+        "     /data/audiobooks",
+        "5  artist  Music",
+        "     /data/music",
+        "1  movie  Movies",
+        "     /data/movies",
+        "     /data/movies2",
+    ]
+
+
+def test_plex_sections_never_prints_the_token(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main(["plex", "sections"], env=PLEX_ENV, http=plex_http())
+
+    assert TOKEN not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("missing", ["PLEX_URL", "PLEX_TOKEN"])
+def test_plex_stops_when_a_setting_is_missing(
+    missing: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = {k: v for k, v in PLEX_ENV.items() if k != missing}
+    http = plex_http()
+
+    code = main(["plex", "sections"], env=env, http=http)
+
+    assert code == 1
+    assert f"FAIL plex: {missing} is not set" in capsys.readouterr().out
+    assert http.requests == []
+
+
+def test_plex_refresh_starts_the_scan_and_records_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = {**make_beetsdir(tmp_path), **PLEX_ENV}
+    http = plex_http()
+
+    code = main(
+        ["plex", "refresh", "--section", "Music"], env=env, http=http, now=lambda: NOW
+    )
+
+    assert code == 0
+    assert http.paths() == ["/library/sections", "/library/sections/5/refresh"]
+    assert "ok   rescan started: Music (5)" in capsys.readouterr().out
+    (entry,) = read_entries(tmp_path / "logs" / "changes.jsonl")
+    assert entry == {
+        "time": "2026-10-24T21:30:05",
+        "action": "plex-refresh",
+        "section": "5",
+        "title": "Music",
+        "locations": ["/data/music"],
+    }
+
+
+def test_plex_refresh_takes_the_library_from_plex_section(tmp_path: Path) -> None:
+    env = {**make_beetsdir(tmp_path), **PLEX_ENV, "PLEX_SECTION": "Audiobook"}
+    http = plex_http()
+
+    main(["plex", "refresh"], env=env, http=http, now=lambda: NOW)
+
+    assert http.paths()[-1] == "/library/sections/6/refresh"
+
+
+def test_plex_refresh_will_not_guess_between_two_music_libraries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = {**make_beetsdir(tmp_path), **PLEX_ENV}
+    http = plex_http()
+
+    code = main(["plex", "refresh"], env=env, http=http, now=lambda: NOW)
+
+    assert code == 1
+    assert (
+        "several music libraries: Audiobook (6), Music (5)" in capsys.readouterr().out
+    )
+    assert http.paths() == ["/library/sections"]
+
+
+def test_plex_refresh_needs_beetsdir_so_it_can_log(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    http = plex_http()
+
+    code = main(["plex", "refresh", "--section", "Music"], env=PLEX_ENV, http=http)
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out
+    assert http.requests == []
+
+
+def test_plex_refresh_logs_nothing_when_the_token_is_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = {**make_beetsdir(tmp_path), **PLEX_ENV}
+    http = FakeHttp(Response(401, ""))
+
+    code = main(
+        ["plex", "refresh", "--section", "Music"], env=env, http=http, now=lambda: NOW
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL plex: Plex rejected the token (401)" in out
+    assert TOKEN not in out
+    assert not (tmp_path / "logs").exists()
