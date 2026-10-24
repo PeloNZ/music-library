@@ -420,9 +420,10 @@ def test_unattended_ingest_records_the_import_in_the_change_log(
             "time": "2026-10-24T21:30:05",
             "action": "import",
             "batch": "20261024-2130-deserted",
-            "source": str(source),
+            "source": str(source.resolve()),
             "albums": 1,
             "flagged": 1,
+            "skipped": [],
             "items": ["/lib/Gatecreeper/01.flac", "/lib/Gatecreeper/02.flac"],
         }
     ]
@@ -438,3 +439,66 @@ def test_summary_records_the_import_without_a_source(tmp_path: Path) -> None:
     assert entry["batch"] == "b1"
     assert "source" not in entry
     assert len(entry["items"]) == 2
+
+
+def write_import_log(beets: Path, batch: str, text: str) -> None:
+    (beets / "logs").mkdir(exist_ok=True)
+    (beets / "logs" / f"import-{batch}.log").write_text(text)
+
+
+def test_summary_lists_the_albums_the_importer_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    write_import_log(
+        beets,
+        "b1",
+        "import started Sat Oct 24 22:04:41 2026\n"
+        "skip /inbox/Cake/Fashion Nugget\n"
+        "asis /inbox/Demo\n",
+    )
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    assert "2 logged by the importer" in out
+    assert "  skip: /inbox/Cake/Fashion Nugget" in out
+    assert "  asis: /inbox/Demo" in out
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["skipped"] == [
+        {"kind": "skip", "path": "/inbox/Cake/Fashion Nugget"},
+        {"kind": "asis", "path": "/inbox/Demo"},
+    ]
+
+
+def test_summary_without_an_import_log_lists_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    assert "logged by the importer" not in capsys.readouterr().out
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["skipped"] == []
+
+
+def test_ingest_records_the_source_as_an_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    source = make_source(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    main(
+        ["ingest", "inbox/Deserted", "--unattended"],
+        env=make_beetsdir(beets),
+        run=Recorder(),
+        now=lambda: NOW,
+    )
+
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["source"] == str(source.resolve())

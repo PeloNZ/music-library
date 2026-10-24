@@ -21,6 +21,7 @@ from musicos.ingest import (
     has_audio,
     import_command,
     make_batch_id,
+    parse_import_log,
     summarize_batch,
 )
 from musicos.lint import activity_line, render_report, run_lint
@@ -100,6 +101,12 @@ def report_batch(
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:
         print(f"  - {a.get('albumartist', '?')} - {a.get('album', '?')}")
+    import_log = Path(env["BEETSDIR"]) / "logs" / f"import-{batch}.log"
+    logged = parse_import_log(import_log.read_text()) if import_log.exists() else []
+    if logged:
+        print(f"{len(logged)} logged by the importer (not imported as matched):")
+        for entry in logged:
+            print(f"  {entry.kind}: {entry.path}")
     fields: dict[str, Any] = {"batch": batch}
     if source is not None:
         fields["source"] = str(source)
@@ -110,6 +117,7 @@ def report_batch(
         **fields,
         albums=summary.albums,
         flagged=flagged,
+        skipped=[{"kind": e.kind, "path": e.path} for e in logged],
         items=items,
     )
     log_activity(
@@ -122,6 +130,7 @@ def report_batch(
 def ingest(
     env: Mapping[str, str], run: Run, when: datetime, source: Path, unattended: bool
 ) -> int:
+    source = source.resolve()
     if not source.is_dir() or not has_audio(source):
         print(f"FAIL source: no audio files under {source}")
         return 1
