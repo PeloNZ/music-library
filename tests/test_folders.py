@@ -3,8 +3,10 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from musicos.folders import (
+    PLEXIGNORE,
     FolderError,
     check_outside_plex,
+    create_plex_free_folder,
     parse_path_map,
     to_server_path,
 )
@@ -67,3 +69,60 @@ def test_a_folder_inside_a_library_is_not_outside_plex() -> None:
 
 def test_a_name_that_only_starts_like_a_library_is_outside_plex() -> None:
     check_outside_plex(PurePosixPath("/data/jbod2/media/music2"), LIBRARIES)
+
+
+def test_creating_a_folder_writes_a_plexignore_that_ignores_everything(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "music-inbox"
+
+    result = create_plex_free_folder(folder)
+
+    assert folder.is_dir()
+    assert (folder / ".plexignore").read_text() == PLEXIGNORE
+    assert "\n*\n" in PLEXIGNORE
+    assert result.made and result.plexignore_written
+
+
+def test_a_missing_parent_is_an_error_and_nothing_is_created(tmp_path: Path) -> None:
+    folder = tmp_path / "not-mounted" / "music-inbox"
+
+    with pytest.raises(FolderError, match="is the share mounted"):
+        create_plex_free_folder(folder)
+
+    assert not (tmp_path / "not-mounted").exists()
+
+
+def test_an_existing_folder_is_kept_and_still_gets_its_plexignore(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "music-inbox"
+    folder.mkdir()
+    (folder / "album").mkdir()
+
+    result = create_plex_free_folder(folder)
+
+    assert (folder / "album").is_dir()
+    assert not result.made
+    assert result.plexignore_written
+
+
+def test_an_existing_plexignore_is_never_overwritten(tmp_path: Path) -> None:
+    folder = tmp_path / "music-inbox"
+    folder.mkdir()
+    (folder / ".plexignore").write_text("# mine\nTrash/\n")
+
+    result = create_plex_free_folder(folder)
+
+    assert (folder / ".plexignore").read_text() == "# mine\nTrash/\n"
+    assert not result.plexignore_written
+
+
+def test_running_it_twice_changes_nothing_the_second_time(tmp_path: Path) -> None:
+    folder = tmp_path / "music-inbox"
+    create_plex_free_folder(folder)
+
+    again = create_plex_free_folder(folder)
+
+    assert not again.made
+    assert not again.plexignore_written

@@ -8,6 +8,7 @@ library folders before it is made.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
@@ -48,3 +49,31 @@ def check_outside_plex(
             raise FolderError(
                 f"{server_path} is inside the Plex library folder {library}"
             )
+
+
+PLEXIGNORE = "# Plex must not scan this folder.\n*\n"
+
+
+@dataclass(frozen=True)
+class FolderResult:
+    path: Path
+    made: bool
+    plexignore_written: bool
+
+
+def create_plex_free_folder(path: Path) -> FolderResult:
+    """Make the folder, and a .plexignore that ignores everything in it.
+
+    The parent must already exist. A missing parent usually means a share is
+    not mounted, and making it would leave a local folder at the share's path.
+    An existing folder and an existing .plexignore are left as they are.
+    """
+    if not path.parent.is_dir():
+        raise FolderError(f"{path.parent} does not exist; is the share mounted?")
+    made = not path.exists()
+    path.mkdir(exist_ok=True)
+    ignore = path / ".plexignore"
+    written = not ignore.exists()
+    if written:
+        ignore.write_text(PLEXIGNORE)
+    return FolderResult(path, made, written)
