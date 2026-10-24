@@ -516,7 +516,7 @@ def plex_command(
 
 
 def folders_command(
-    env: Mapping[str, str], args: argparse.Namespace, when: datetime, http: Get
+    env: Mapping[str, str], args: argparse.Namespace, now: Clock, http: Get
 ) -> int:
     if args.apply and not beetsdir_ok(env):
         return 1  # making the folders is a change, so it must be logged
@@ -549,19 +549,25 @@ def folders_command(
             print(f"{verb} {folder.name} ({server})")
         print("dry run: nothing changed. Add --apply to create them.")
         return 0
+    trace = Trace(
+        logs_dir(env), now, "folders", f"{args.inbox.name},{args.holding.name}"
+    )
+    trace.start()
     results = [create_plex_free_folder(folder) for folder, _ in plan]
     created = [str(r.path) for r in results if r.made]
     ignores = [str(r.path / ".plexignore") for r in results if r.plexignore_written]
     if not created and not ignores:
+        trace.done("already in place")
         print("already in place")
         return 0
     record(
         changes_log(env),
         "folders",
-        when,
+        now(),
         created=created,
         plexignore=ignores,
     )
+    trace.done(f"{len(created)} created")
     for folder, server in plan:
         print(f"ok   {folder} ({server})")
     return 0
@@ -586,7 +592,7 @@ def gaps(env: Mapping[str, str], run: Run, when: datetime) -> int:
 
 
 def clean_appledouble(
-    env: Mapping[str, str], args: argparse.Namespace, when: datetime
+    env: Mapping[str, str], args: argparse.Namespace, now: Clock
 ) -> int:
     root: Path = args.root.resolve()
     if root in (Path("/"), Path("/Volumes")):
@@ -610,7 +616,10 @@ def clean_appledouble(
     if not args.apply:
         print("dry run: nothing deleted. Add --apply to delete them.")
         return 0
+    trace = Trace(logs_dir(env), now, "clean-appledouble", str(root))
+    trace.start(f"{len(found)} files")
     result = delete_appledouble(found)
+    trace.done(f"deleted {len(result.deleted)}, failed {len(result.failed)}")
     print(f"deleted {len(result.deleted)} AppleDouble files ({result.bytes} bytes)")
     for path, reason in result.failed[:10]:
         print(f"FAIL {path.name}: {reason}")
@@ -618,7 +627,7 @@ def clean_appledouble(
         record(
             changes_log(env),
             "clean-appledouble",
-            when,
+            now(),
             root=str(root),
             deleted=len(result.deleted),
             failed=len(result.failed),
@@ -820,9 +829,9 @@ def main(
     if args.command == "plex":
         return plex_command(env, args, now(), http)
     if args.command == "folders":
-        return folders_command(env, args, now(), http)
+        return folders_command(env, args, now, http)
     if args.command == "clean-appledouble":
-        return clean_appledouble(env, args, now())
+        return clean_appledouble(env, args, now)
     if args.command == "dupes":
         return dupes(env, args, now(), tag_reader, run)
     if args.command == "candidates":

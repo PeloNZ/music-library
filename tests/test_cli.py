@@ -2216,3 +2216,65 @@ def test_batch_dry_run_writes_no_activity_lines(tmp_path: Path) -> None:
     _, beets = batch(tmp_path, BatchRun())
 
     assert not (beets / "logs" / "musicos-activity.log").exists()
+
+
+def test_folders_apply_writes_a_start_and_a_done_line(tmp_path: Path) -> None:
+    media = media_share(tmp_path)
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(
+        folders_args(tmp_path, media, "--apply"),
+        env={**make_beetsdir(beets), **PLEX_ENV},
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text() == (
+        "2026-10-24 21:30:05 folders music-inbox,music-holding start\n"
+        "2026-10-24 21:30:05 folders music-inbox,music-holding done 2 created\n"
+    )
+
+
+def test_folders_dry_run_writes_no_activity_lines(tmp_path: Path) -> None:
+    media = media_share(tmp_path)
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(
+        folders_args(tmp_path, media),
+        env={**make_beetsdir(beets), **PLEX_ENV},
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    assert not (beets / "logs" / "musicos-activity.log").exists()
+
+
+def test_clean_appledouble_apply_writes_a_start_and_a_done_line(
+    tmp_path: Path,
+) -> None:
+    root = dirty_share(tmp_path / "share")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(
+        ["clean-appledouble", str(root), "--apply"],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+    )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text() == (
+        f"2026-10-24 21:30:05 clean-appledouble {root} start 2 files\n"
+        f"2026-10-24 21:30:05 clean-appledouble {root} done deleted 2, failed 0\n"
+    )
+
+
+def test_clean_appledouble_dry_run_writes_no_activity_lines(tmp_path: Path) -> None:
+    root = dirty_share(tmp_path / "share")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(["clean-appledouble", str(root)], env=make_beetsdir(beets), now=lambda: NOW)
+
+    assert not (beets / "logs" / "musicos-activity.log").exists()
