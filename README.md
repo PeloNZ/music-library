@@ -101,7 +101,7 @@ Priority, highest first:
 | A strictly higher priority copy exists | the lower copy is a **deletion candidate** |
 | Two copies share the top priority | **tie**: neither is marked, the user chooses |
 | A lower priority copy has more tracks than the best copy | **review**: not marked, deleting it could lose tracks |
-| The group holds a format outside the ranking (WAV, ALAC, APE) | **review**: nothing is marked |
+| The group holds a format outside the ranking (WAV, ALAC, APE), or a FLAC with several cue sheets | **review**: nothing is marked |
 
 Each log entry has a status read from the disk: `open`, `stale` (every copy that outranked it is gone, so it is no longer safe to delete) or `done` (the folder is gone, hidden unless `candidates --all`).
 

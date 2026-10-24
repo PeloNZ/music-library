@@ -27,7 +27,7 @@ Priority, highest first:
 - A copy is a **deletion candidate** only when a strictly higher priority copy exists in the same group.
 - Two copies at the top priority are a **tie**. Neither is marked. The user chooses.
 - A lower priority copy with **more tracks** than the best copy is **review**, not a candidate. Deleting it could lose tracks.
-- A group with a format outside the ranking (WAV, ALAC, APE and so on) is **review**. Nothing is marked.
+- A group with a format outside the ranking (WAV, ALAC, APE and so on), or one FLAC with several cue sheets, is **review**. Nothing is marked.
 
 ## What you do
 

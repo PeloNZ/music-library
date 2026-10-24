@@ -126,3 +126,13 @@ def test_decisions_come_back_in_the_order_of_the_group() -> None:
     group = [lossy("z"), tracks("y"), cue_rip("x")]
 
     assert [d.release for d in decide(group)] == group
+
+
+def test_a_copy_with_several_cue_sheets_is_reviewed_and_nothing_is_marked() -> None:
+    unclear = rel("/rip", kind="flac", cue=False, ambiguous=True)
+
+    result = decide([tracks("split"), unclear])
+
+    assert set(actions(result).values()) == {"review"}
+    reason = next(d.reason for d in result if d.release.folder.name == "rip")
+    assert reason == "several cue sheets: cannot tell which one belongs to the FLAC"

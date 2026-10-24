@@ -508,6 +508,20 @@ def test_a_macos_shadow_of_the_cue_sheet_is_not_the_cue_sheet(tmp_path: Path) ->
     assert (release.tracks, release.album) == (2, "Celestial")
 
 
+def test_a_single_flac_with_two_cue_sheets_is_marked_ambiguous(tmp_path: Path) -> None:
+    folder = tmp_path / "Isis - Celestial [EAC-FLAC]"
+    touch(folder, "Isis - Celestial.flac", data=b"big")
+    (folder / "a.cue").write_text(CUE)
+    (folder / "b.cue").write_text(CUE)
+    read = tags_by_name({"Isis - Celestial.flac": flac("Celestial", 3000.0)})
+
+    release = describe(folder, read)
+
+    assert release.ambiguous is True
+    assert release.cue is False
+    assert release.tracks == 1
+
+
 def test_a_folder_with_no_readable_file_is_not_ranked_as_lossy(tmp_path: Path) -> None:
     folder = tmp_path / "x"
     touch(folder, "1.flac")

@@ -20,7 +20,9 @@ PRIORITY = {
 
 def rank(release: Release) -> int | None:
     """1 split FLAC, 2 FLAC with a cue file, 3 lossy. None when the format is
-    not in the ranking, such as WAV or ALAC."""
+    not in the ranking, such as WAV or ALAC, or a FLAC has several cue sheets."""
+    if release.ambiguous:
+        return None
     if release.kind == "flac":
         return 2 if release.cue else 1
     if release.kind == "lossy":
@@ -51,7 +53,9 @@ def decide(group: list[Release]) -> list[Decision]:
             Decision(
                 r,
                 "review",
-                f"{r.fmt or 'no readable file'} is not in the ranking"
+                "several cue sheets: cannot tell which one belongs to the FLAC"
+                if r.ambiguous
+                else f"{r.fmt or 'no readable file'} is not in the ranking"
                 if rank(r) is None
                 else "the group holds a format that is not in the ranking",
             )

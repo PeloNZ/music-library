@@ -47,6 +47,7 @@ class Release:
     cue: bool
     unreadable: int
     kind: str = "flac"  # flac, lossless, lossy or unknown (no file could be read)
+    ambiguous: bool = False  # one audio file with several cue sheets
 
 
 def _audio_files(folder: Path) -> list[Path]:
@@ -96,7 +97,7 @@ def describe(folder: Path, read_tags: TagReader) -> Release:
     album = most_common([t.album for t in tags])
     tracks = len(files)
     cues = files_with_suffix(folder, ".cue") if len(files) == 1 else []
-    is_rip = bool(cues)
+    is_rip = len(cues) == 1
     if is_rip:
         text = read_cue(cues[0])
         header = cue_header(text)
@@ -115,6 +116,7 @@ def describe(folder: Path, read_tags: TagReader) -> Release:
         cue=is_rip,
         unreadable=len(files) - len(tags),
         kind=most_common([t.kind for t in tags], "unknown"),
+        ambiguous=len(cues) > 1,
     )
 
 
