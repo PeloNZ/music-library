@@ -139,9 +139,10 @@ EXPORT = '[{"id": 1, "album": "Deserted", "mb_albumid": ""}]'
 class Recorder:
     """Fake runner that records every command it is given."""
 
-    def __init__(self, import_code: int = 0) -> None:
+    def __init__(self, import_code: int = 0, dry_run_code: int = 0) -> None:
         self.commands: list[list[str]] = []
         self.import_code = import_code
+        self.dry_run_code = dry_run_code
 
     def __call__(self, cmd: list[str]) -> Output:
         self.commands.append(cmd)
@@ -150,7 +151,10 @@ class Recorder:
         if cmd == ["beet", "version"]:
             return Output(VERSION, "", 0)
         if cmd[:3] == ["beet", "import", "--pretend"]:
-            return Output("Album: x\n  x/01.flac\n", "", 0)
+            if self.dry_run_code:
+                return Output("", "error: no such folder\n", self.dry_run_code)
+            # beets prints the --pretend list to stderr, not stdout
+            return Output("", "Album: x\n  x/01.flac\n", 0)
         if cmd[:2] == ["beet", "import"]:
             return Output(
                 "", "import failed" if self.import_code else "", self.import_code
@@ -1324,3 +1328,24 @@ def test_split_reports_a_file_system_error_as_a_failure_and_carries_on(
     assert code == 1
     assert "FAIL Bad: " in out and "Input/output error" in out
     assert (tmp_path / "holding" / "Good").exists()
+
+
+def test_ingest_stops_when_the_dry_run_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    run = Recorder(dry_run_code=1)
+
+    code = main(
+        ["ingest", str(make_source(tmp_path))],
+        env=make_beetsdir(beets),
+        run=run,
+        now=lambda: NOW,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL dry run: error: no such folder" in out
+    assert "uv run beet import" not in out
+    assert not run.ran_import()

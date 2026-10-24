@@ -218,7 +218,15 @@ def ingest(
     batch = make_batch_id(when, source)
     logs = Path(env["BEETSDIR"]) / "logs"
     logs.mkdir(exist_ok=True)
-    print(run(dry_run_command(source)).stdout, end="")
+    dry_run = run(dry_run_command(source))
+    if dry_run.code != 0:
+        message = dry_run.stderr.strip().splitlines()[:1] or [
+            f"exit code {dry_run.code}"
+        ]
+        print(f"FAIL dry run: {message[0]}")
+        return 1
+    # beets prints the --pretend file list to stderr
+    print(dry_run.stderr or dry_run.stdout, end="")
     cmd = import_command(source, batch, logs, unattended)
     if not unattended:
         print("Run this in your own terminal. The match prompts need one:")
