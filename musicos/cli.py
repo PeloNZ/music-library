@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
+from musicos.ingest import (
+    dry_run_command,
+    has_audio,
+    import_command,
+    make_batch_id,
+    summarize_batch,
+)
 from musicos.lint import activity_line, render_report, run_lint
 from musicos.preflight import (
     Result,
+    check_acoustid,
     check_beetsdir,
     check_mount,
     check_plugins,
@@ -22,11 +32,18 @@ from musicos.preflight import (
 from musicos.runner import Run, run_command
 
 
+def load_config(env: Mapping[str, str]) -> dict[str, Any]:
+    config: dict[str, Any] = yaml.safe_load(
+        (Path(env["BEETSDIR"]) / "config.yaml").read_text()
+    )
+    return config
+
+
 def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
     results = [check_beetsdir(env)]
     if not results[0].ok:
         return results
-    config = yaml.safe_load((Path(env["BEETSDIR"]) / "config.yaml").read_text())
+    config = load_config(env)
     results.append(check_mount(config["directory"], run(["mount"]).stdout))
     wanted = configured_plugins(config)
     version = run(["beet", "version"])
@@ -50,12 +67,57 @@ def lint(env: Mapping[str, str], run: Run, when: datetime) -> int:
     logs.mkdir(exist_ok=True)
     report = logs / "last-health-report.md"
     report.write_text(render_report(checks, when))
-    with (logs / "musicos-activity.log").open("a") as log:
-        log.write(activity_line(checks, when) + "\n")
+    log_activity(env, activity_line(checks, when))
     for c in checks:
         print(f"{c.name}: {'could not run (' + c.error + ')' if c.error else c.count}")
     print(f"report: {report}")
     return 1 if any(c.error for c in checks) else 0
+
+
+def log_activity(env: Mapping[str, str], line: str) -> None:
+    logs = Path(env["BEETSDIR"]) / "logs"
+    logs.mkdir(exist_ok=True)
+    with (logs / "musicos-activity.log").open("a") as log:
+        log.write(line + "\n")
+
+
+def report_batch(env: Mapping[str, str], run: Run, batch: str, when: datetime) -> int:
+    summary = summarize_batch(run, batch)
+    flagged = len(summary.flagged)
+    print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
+    for a in summary.flagged:
+        print(f"  - {a.get('albumartist', '?')} - {a.get('album', '?')}")
+    log_activity(
+        env,
+        f"{when:%Y-%m-%d %H:%M:%S} ingest {batch} {summary.albums} albums, {flagged} flagged",
+    )
+    return 0
+
+
+def ingest(
+    env: Mapping[str, str], run: Run, when: datetime, source: Path, unattended: bool
+) -> int:
+    if not print_results([check_acoustid(load_config(env))]):
+        return 1
+    if not source.is_dir() or not has_audio(source):
+        print(f"FAIL source: no audio files under {source}")
+        return 1
+    batch = make_batch_id(when, source)
+    logs = Path(env["BEETSDIR"]) / "logs"
+    logs.mkdir(exist_ok=True)
+    print(run(dry_run_command(source)).stdout, end="")
+    cmd = import_command(source, batch, logs, unattended)
+    if not unattended:
+        print("Run this in your own terminal. The match prompts need one:")
+        print(f"  uv run {shlex.join(cmd)}")
+        print(f"Then: uv run musicos summary {batch}")
+        return 0
+    out = run(cmd)
+    if out.code != 0:
+        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
+        print(f"FAIL import: {message[0]}")
+        return 1
+    return report_batch(env, run, batch, when)
 
 
 def main(
@@ -70,12 +132,25 @@ def main(
         "preflight", help="check BEETSDIR, the share mount and the plugins"
     )
     commands.add_parser("lint", help="run the read-only health checks")
+    ingest_parser = commands.add_parser("ingest", help="import a folder of new music")
+    ingest_parser.add_argument("source", type=Path)
+    ingest_parser.add_argument(
+        "--unattended",
+        action="store_true",
+        help="run the import now; skip albums that need a decision",
+    )
+    summary_parser = commands.add_parser("summary", help="report on an import batch")
+    summary_parser.add_argument("batch")
     args = parser.parse_args(argv)
 
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":
         return lint(env, run, now())
+    if args.command == "ingest":
+        return ingest(env, run, now(), args.source, args.unattended)
+    if args.command == "summary":
+        return report_batch(env, run, args.batch, now())
     return 0
 
 

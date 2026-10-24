@@ -10,9 +10,10 @@ MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"
 
 
-def make_beetsdir(tmp_path: Path) -> dict[str, str]:
+def make_beetsdir(tmp_path: Path, key: str = "") -> dict[str, str]:
+    acoustid = f"acoustid:\n  apikey: {key}\n" if key else ""
     (tmp_path / "config.yaml").write_text(
-        "directory: /Volumes/music\nplugins: chroma missing\n"
+        "directory: /Volumes/music\nplugins: chroma missing\n" + acoustid
     )
     return {"BEETSDIR": str(tmp_path)}
 
@@ -125,3 +126,163 @@ def test_lint_does_nothing_when_preflight_fails(
     assert code == 1
     assert "FAIL mount" in capsys.readouterr().out
     assert not (tmp_path / "logs").exists()
+
+
+EXPORT = '[{"id": 1, "album": "Deserted", "mb_albumid": ""}]'
+
+
+class Recorder:
+    """Fake runner that records every command it is given."""
+
+    def __init__(self, import_code: int = 0) -> None:
+        self.commands: list[list[str]] = []
+        self.import_code = import_code
+
+    def __call__(self, cmd: list[str]) -> Output:
+        self.commands.append(cmd)
+        if cmd[0] == "mount":
+            return Output(MOUNTS, "", 0)
+        if cmd == ["beet", "version"]:
+            return Output(VERSION, "", 0)
+        if cmd[:3] == ["beet", "import", "--pretend"]:
+            return Output("Album: x\n  x/01.flac\n", "", 0)
+        if cmd[:2] == ["beet", "import"]:
+            return Output(
+                "", "import failed" if self.import_code else "", self.import_code
+            )
+        if cmd[:2] == ["beet", "export"]:
+            return Output(EXPORT, "", 0)
+        return Output("", "", 0)
+
+    def ran_import(self) -> bool:
+        return any(
+            c[:2] == ["beet", "import"] and "--pretend" not in c for c in self.commands
+        )
+
+
+def make_source(tmp_path: Path) -> Path:
+    source = tmp_path / "inbox" / "Deserted"
+    source.mkdir(parents=True)
+    (source / "01.flac").write_bytes(b"")
+    return source
+
+
+def test_ingest_prints_the_command_and_does_not_import(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    run = Recorder()
+
+    code = main(
+        ["ingest", str(make_source(tmp_path))],
+        env=make_beetsdir(beets, key="k3y"),
+        run=run,
+        now=lambda: NOW,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Album: x" in out
+    assert "uv run beet import -l " in out
+    assert "musicos_batch=20261024-2130-deserted" in out
+    assert "-q" not in out
+    assert not run.ran_import()
+
+
+def test_ingest_stops_when_the_acoustid_key_is_not_set(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    run = Recorder()
+
+    code = main(
+        ["ingest", str(make_source(tmp_path))],
+        env=make_beetsdir(beets),
+        run=run,
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "FAIL acoustid" in capsys.readouterr().out
+    assert not run.ran_import()
+
+
+def test_ingest_stops_when_the_source_has_no_audio(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    code = main(
+        ["ingest", str(empty)],
+        env=make_beetsdir(beets, key="k3y"),
+        run=Recorder(),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "FAIL source" in capsys.readouterr().out
+
+
+def test_unattended_ingest_imports_summarises_and_logs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    run = Recorder()
+
+    code = main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets, key="k3y"),
+        run=run,
+        now=lambda: NOW,
+    )
+
+    assert code == 0
+    assert run.ran_import()
+    assert "1 albums, 1 without a MusicBrainz match" in capsys.readouterr().out
+    log = (beets / "logs" / "musicos-activity.log").read_text()
+    assert (
+        log == "2026-10-24 21:30:05 ingest 20261024-2130-deserted 1 albums, 1 flagged\n"
+    )
+
+
+def test_unattended_ingest_reports_a_failed_import(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets, key="k3y"),
+        run=Recorder(import_code=1),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "FAIL import: import failed" in capsys.readouterr().out
+    assert not (beets / "logs" / "musicos-activity.log").exists()
+
+
+def test_summary_reads_a_finished_batch_and_logs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["summary", "20261024-2130-deserted"],
+        env=make_beetsdir(beets, key="k3y"),
+        run=Recorder(),
+        now=lambda: NOW,
+    )
+
+    assert code == 0
+    assert "Deserted" in capsys.readouterr().out
+    log = (beets / "logs" / "musicos-activity.log").read_text()
+    assert log.endswith("ingest 20261024-2130-deserted 1 albums, 1 flagged\n")
