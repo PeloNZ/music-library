@@ -364,3 +364,17 @@ def test_read_tags_of_a_file_that_is_not_audio_is_none(tmp_path: Path) -> None:
 
 def test_read_tags_of_a_missing_file_is_none(tmp_path: Path) -> None:
     assert read_tags(tmp_path / "missing.flac") is None
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("tag", ["0", "0/0", "00"])
+def test_a_disc_number_of_zero_means_not_set_and_reads_as_disc_one(
+    tmp_path: Path, tag: str
+) -> None:
+    flac_file = tmp_path / "01.flac"
+    make_audio(flac_file, "-metadata", f"discnumber={tag}")
+
+    tags = read_tags(flac_file)
+
+    assert tags is not None
+    assert tags.disc == "1"

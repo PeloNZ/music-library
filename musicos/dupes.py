@@ -227,6 +227,13 @@ def activity_line(groups: list[list[Release]], checked: int, when: datetime) -> 
     )
 
 
+def _disc(tag: str) -> str:
+    """The disc number from a `1` or `1/2` tag. Missing, unreadable or 0, which
+    beets and many taggers use for "not set", all mean disc 1."""
+    number = tag.split("/")[0].strip()
+    return number.lstrip("0") if number.isdigit() and number.strip("0") else "1"
+
+
 def read_tags(path: Path) -> Tags | None:
     """Tags and stream details of one audio file, or None if it cannot be read."""
     try:
@@ -252,7 +259,7 @@ def read_tags(path: Path) -> Tags | None:
         album=first("album"),
         artist=first("albumartist") or first("artist"),
         year=first("date")[:4],
-        disc=first("discnumber").split("/")[0] or "1",
+        disc=_disc(first("discnumber")),
         length=float(info.length),
         fmt=fmt,
     )
