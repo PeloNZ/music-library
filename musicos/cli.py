@@ -37,7 +37,14 @@ from musicos.ingest import (
     summarize_batch,
 )
 from musicos.lint import activity_line, render_report, run_lint
-from musicos.plex import Get, PlexError, choose_section, http_get, plex_from_env
+from musicos.plex import (
+    Get,
+    PlexError,
+    choose_section,
+    http_get,
+    plex_from_env,
+    section_for_path,
+)
 from musicos.preflight import (
     Result,
     check_beetsdir,
@@ -109,6 +116,8 @@ def report_batch(
     batch: str,
     when: datetime,
     source: Path | None = None,
+    http: Get = http_get,
+    refresh_plex: bool = True,
 ) -> int:
     try:
         summary = summarize_batch(run, batch)
@@ -151,11 +160,56 @@ def report_batch(
         env,
         f"{when:%Y-%m-%d %H:%M:%S} ingest {batch} {summary.albums} albums, {flagged} flagged",
     )
+    if refresh_plex and not already:
+        rescan_plex(env, http, when, batch)
     return 0
 
 
+def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -> None:
+    """After an import, rescan the Plex music library that holds beets' directory.
+
+    A rescan that cannot run never undoes the import. It prints why and moves on.
+    """
+    try:
+        plex = plex_from_env(env, http)
+    except PlexError as exc:
+        print(f"plex: not refreshed ({exc})")
+        return
+    try:
+        maps = parse_path_map([m for m in env.get("PLEX_PATH_MAP", "").split(",") if m])
+        library = Path(load_config(env)["directory"])
+        server = to_server_path(library, maps)
+        if server is None:
+            print(f"plex: not refreshed (no PLEX_PATH_MAP entry covers {library})")
+            return
+        section = section_for_path(server, plex.sections())
+        if section is None:
+            print(f"plex: not refreshed ({server} is not in a Plex music library)")
+            return
+        plex.refresh(section.id)
+    except (PlexError, FolderError) as exc:
+        print(f"WARN plex: not refreshed: {exc}")
+        return
+    record(
+        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        "plex-refresh",
+        when,
+        batch=batch,
+        section=section.id,
+        title=section.title,
+        locations=section.locations,
+    )
+    print(f"ok   plex rescan started: {section.title} ({section.id})")
+
+
 def ingest(
-    env: Mapping[str, str], run: Run, when: datetime, source: Path, unattended: bool
+    env: Mapping[str, str],
+    run: Run,
+    when: datetime,
+    source: Path,
+    unattended: bool,
+    http: Get = http_get,
+    refresh_plex: bool = True,
 ) -> int:
     source = source.resolve()
     if not source.is_dir() or not has_audio(source):
@@ -176,7 +230,7 @@ def ingest(
         message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
         print(f"FAIL import: {message[0]}")
         return 1
-    return report_batch(env, run, batch, when, source)
+    return report_batch(env, run, batch, when, source, http, refresh_plex)
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
@@ -388,8 +442,14 @@ def main(
         action="store_true",
         help="run the import now; skip albums that need a decision",
     )
+    ingest_parser.add_argument(
+        "--no-plex-refresh", action="store_true", help="do not rescan Plex afterwards"
+    )
     summary_parser = commands.add_parser("summary", help="report on an import batch")
     summary_parser.add_argument("batch")
+    summary_parser.add_argument(
+        "--no-plex-refresh", action="store_true", help="do not rescan Plex afterwards"
+    )
     split_parser = commands.add_parser("split", help="split FLAC + cue rips")
     split_parser.add_argument("root", type=Path, help="folder to scan")
     split_parser.add_argument("--inbox", type=Path, required=True)
@@ -438,11 +498,21 @@ def main(
     if args.command == "gaps":
         return gaps(env, run, now())
     if args.command == "ingest":
-        return ingest(env, run, now(), args.source, args.unattended)
+        return ingest(
+            env,
+            run,
+            now(),
+            args.source,
+            args.unattended,
+            http,
+            not args.no_plex_refresh,
+        )
     if args.command == "split":
         return split(env, run, now(), args, which)
     if args.command == "summary":
-        return report_batch(env, run, args.batch, now())
+        return report_batch(
+            env, run, args.batch, now(), None, http, not args.no_plex_refresh
+        )
     return 0
 
 

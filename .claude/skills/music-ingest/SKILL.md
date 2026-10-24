@@ -34,6 +34,10 @@ Never run `beet import -q` with `quiet_fallback: asis`. It writes unverified tag
 2. Ask the user what to do with each one. Do not guess tags.
 3. Suggest `music-organize` for placement next.
 
+## Plex
+
+After an import, `summary` and `ingest --unattended` rescan the Plex music library that holds `directory:`, once per batch, and log a `plex-refresh` entry. They skip with a reason when Plex is not set up or the folder is not in a Plex library. A failed rescan prints `WARN` and does not undo the import. Add `--no-plex-refresh` to skip it.
+
 ## Notes
 
 - The source folder is not changed. `import.copy: yes` keeps the original files until the user approves move mode.

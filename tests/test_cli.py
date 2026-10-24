@@ -1144,3 +1144,115 @@ def test_gaps_reports_a_failing_export_and_writes_nothing(
     assert code == 1
     assert "FAIL gaps: error: no such field" in capsys.readouterr().out
     assert not (tmp_path / "logs").exists()
+
+
+LIBRARY_MAP = "/Volumes/music=/data/jbod2/media/music"
+
+
+def ingest_env(beets: Path, **extra: str) -> dict[str, str]:
+    return {**make_beetsdir(beets), **PLEX_ENV, "PLEX_PATH_MAP": LIBRARY_MAP, **extra}
+
+
+def run_unattended(
+    tmp_path: Path, beets: Path, env: dict[str, str], http: FakeHttp, *flags: str
+) -> int:
+    return main(
+        ["ingest", str(make_source(tmp_path)), "--unattended", *flags],
+        env=env,
+        run=Recorder(),
+        now=lambda: NOW,
+        http=http,
+    )
+
+
+def test_ingest_rescans_the_plex_library_that_holds_the_library_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    http = folders_http()
+
+    code = run_unattended(tmp_path, beets, ingest_env(beets), http)
+
+    assert code == 0
+    assert http.paths() == ["/library/sections", "/library/sections/5/refresh"]
+    assert "ok   plex rescan started: Music (5)" in capsys.readouterr().out
+    actions = [e["action"] for e in read_entries(beets / "logs" / "changes.jsonl")]
+    assert actions == ["import", "plex-refresh"]
+    refresh = read_entries(beets / "logs" / "changes.jsonl")[1]
+    assert refresh["batch"] == "20261024-2130-deserted"
+    assert refresh["title"] == "Music"
+
+
+def test_ingest_says_why_it_did_not_rescan_when_plex_is_not_set_up(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    http = folders_http()
+    env = make_beetsdir(beets)  # no Plex settings
+
+    code = run_unattended(tmp_path, beets, env, http)
+
+    assert code == 0
+    assert "plex: not refreshed (PLEX_URL is not set)" in capsys.readouterr().out
+    assert http.requests == []
+
+
+def test_ingest_skips_the_rescan_when_the_library_is_not_in_plex(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    env = ingest_env(beets)
+    (beets / "config.yaml").write_text(
+        "directory: /Users/me/music-test/library\nplugins: chroma\n"
+    )
+    http = folders_http()
+
+    code = run_unattended(tmp_path, beets, env, http)
+
+    assert code == 0
+    assert (
+        "plex: not refreshed (no PLEX_PATH_MAP entry covers" in capsys.readouterr().out
+    )
+    assert http.paths() == []
+
+
+def test_ingest_with_no_plex_refresh_never_calls_plex(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    http = folders_http()
+
+    run_unattended(tmp_path, beets, ingest_env(beets), http, "--no-plex-refresh")
+
+    assert http.requests == []
+
+
+def test_a_plex_failure_does_not_undo_the_import(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    http = FakeHttp(Response(401, ""))
+
+    code = run_unattended(tmp_path, beets, ingest_env(beets), http)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "WARN plex: not refreshed: Plex rejected the token (401)" in out
+    assert TOKEN not in out
+    actions = [e["action"] for e in read_entries(beets / "logs" / "changes.jsonl")]
+    assert actions == ["import"]
+
+
+def test_summary_rescans_once_per_batch(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    env = ingest_env(beets)
+    http = folders_http()
+
+    for _ in range(2):
+        main(["summary", "b1"], env=env, run=Recorder(), now=lambda: NOW, http=http)
+
+    assert http.paths().count("/library/sections/5/refresh") == 1
