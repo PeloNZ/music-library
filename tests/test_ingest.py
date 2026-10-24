@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 
 from musicos.ingest import (
+    LogEntry,
     batch_items,
     dry_run_command,
     has_audio,
     import_command,
     make_batch_id,
+    parse_import_log,
     summarize_batch,
 )
 from musicos.runner import Output
@@ -141,3 +143,25 @@ def test_batch_items_raises_when_beet_fails() -> None:
 
     with pytest.raises(RuntimeError, match="boom"):
         batch_items(run, BATCH)
+
+
+IMPORT_LOG = """\
+import started Sat Oct 24 22:04:41 2026
+skip music-test/src/Cake/Comfort Eagle
+skip music-test/src/Cake/Fashion Nugget
+asis /inbox/Unknown Artist/Demo
+duplicate-skip /inbox/Opeth/Heritage
+"""
+
+
+def test_parse_import_log_returns_each_skipped_path_with_its_kind() -> None:
+    assert parse_import_log(IMPORT_LOG) == [
+        LogEntry("skip", "music-test/src/Cake/Comfort Eagle"),
+        LogEntry("skip", "music-test/src/Cake/Fashion Nugget"),
+        LogEntry("asis", "/inbox/Unknown Artist/Demo"),
+        LogEntry("duplicate-skip", "/inbox/Opeth/Heritage"),
+    ]
+
+
+def test_parse_import_log_ignores_the_header_and_blank_lines() -> None:
+    assert parse_import_log("import started Sat Oct 24 22:04:41 2026\n\n") == []

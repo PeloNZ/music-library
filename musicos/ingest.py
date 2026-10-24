@@ -96,3 +96,28 @@ def batch_items(run: Run, batch: str) -> list[str]:
     out = run(["beet", "ls", "-f", "$path", f"musicos_batch:{batch}"])
     _raise_on_failure(out)
     return [line for line in out.stdout.splitlines() if line.strip()]
+
+
+LOG_KINDS = (
+    "skip",
+    "asis",
+    "duplicate-skip",
+    "duplicate-keep",
+    "duplicate-replace",
+)  # the statuses beets writes: importer/session.py, tag_log
+
+
+@dataclass(frozen=True)
+class LogEntry:
+    kind: str
+    path: str
+
+
+def parse_import_log(text: str) -> list[LogEntry]:
+    """Albums the importer logged: skipped, imported as-is, or duplicates."""
+    entries = []
+    for line in text.splitlines():
+        kind, _, path = line.partition(" ")
+        if kind in LOG_KINDS and path:
+            entries.append(LogEntry(kind, path))
+    return entries
