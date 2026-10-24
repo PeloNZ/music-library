@@ -9,7 +9,7 @@ from musicos.changelog import read_entries, record
 from musicos.cli import main
 from musicos.dupes import Tags
 from musicos.plex import Response
-from musicos.runner import Output, Run
+from musicos.runner import Output, Run, Stream
 from tests.fakes import FakeHttp, Tools, on_another_device
 from tests.test_appledouble import shadow
 from tests.test_split import CUE
@@ -1872,7 +1872,11 @@ class BatchRun(Recorder):
 
 
 def batch(
-    tmp_path: Path, run: Run, *extra: str, root: Path | None = None
+    tmp_path: Path,
+    run: Run,
+    *extra: str,
+    root: Path | None = None,
+    stream: Stream | None = None,
 ) -> tuple[int, Path]:
     root = root or isis_library(tmp_path / "Isis")
     beets = tmp_path / "beets"
@@ -1883,6 +1887,7 @@ def batch(
         run=run,
         now=lambda: NOW,
         tag_reader=isis_tags,
+        stream=stream,
     )
     return code, beets
 
@@ -2007,3 +2012,61 @@ def test_batch_reports_a_failed_import(
 
     assert code == 1
     assert "FAIL import: import failed" in capsys.readouterr().out
+
+
+class FakeStream:
+    """Fake stream_command: records the command and the log, makes no files."""
+
+    def __init__(self, code: int = 0, last_line: str = "") -> None:
+        self.calls: list[tuple[list[str], Path]] = []
+        self.code = code
+        self.last_line = last_line
+
+    def __call__(self, cmd: list[str], log: Path) -> Output:
+        self.calls.append((cmd, log))
+        return Output("", self.last_line, self.code)
+
+
+def test_batch_apply_streams_the_import_to_a_log_that_can_be_followed(
+    tmp_path: Path,
+) -> None:
+    run, stream = BatchRun(), FakeStream()
+
+    code, beets = batch(tmp_path, run, "--apply", stream=stream)
+
+    ((cmd, log),) = stream.calls
+    assert code == 0
+    assert log == beets / "logs" / "import-20261024-2130-isis.out"
+    assert cmd[:2] == ["beet", "import"] and "-q" in cmd
+    assert [c for c in run.imports() if "--pretend" not in c] == []
+
+
+def test_unattended_ingest_streams_the_import_to_a_log_that_can_be_followed(
+    tmp_path: Path,
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    run, stream = Recorder(), FakeStream()
+
+    main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets),
+        run=run,
+        now=lambda: NOW,
+        stream=stream,
+    )
+
+    ((_, log),) = stream.calls
+    assert log == beets / "logs" / "import-20261024-2130-deserted.out"
+    assert not run.ran_import()
+
+
+def test_a_failed_streamed_import_reports_the_last_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stream = FakeStream(code=1, last_line="error: disk full")
+
+    code, _ = batch(tmp_path, BatchRun(), "--apply", stream=stream)
+
+    assert code == 1
+    assert "FAIL import: error: disk full" in capsys.readouterr().out

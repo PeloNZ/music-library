@@ -55,6 +55,7 @@ from musicos.ingest import (
     held_folders,
     import_command,
     make_batch_id,
+    progress_log,
     read_import_logs,
     retry_command,
     summarize_batch,
@@ -78,7 +79,7 @@ from musicos.preflight import (
     configured_plugins,
 )
 from musicos.rules import decide
-from musicos.runner import Run, first_error, run_command
+from musicos.runner import Run, Stream, first_error, run_command, stream_command
 from musicos.split import (
     SplitError,
     check_one_share,
@@ -261,8 +262,8 @@ def show_dry_run(run: Run, sources: list[Path], incremental: bool = False) -> bo
     return True
 
 
-def run_import(run: Run, cmd: list[str]) -> bool:
-    out = run(cmd)
+def run_import(run: Run, stream: Stream | None, cmd: list[str], log: Path) -> bool:
+    out = stream(cmd, log) if stream else run(cmd)
     if out.code != 0:
         print(f"FAIL import: {first_error(out)}")
     return out.code == 0
@@ -276,6 +277,7 @@ def ingest(
     unattended: bool,
     http: Get = http_get,
     refresh_plex: bool = True,
+    stream: Stream | None = None,
 ) -> int:
     source = source.resolve()
     if not source.is_dir() or not has_audio(source):
@@ -292,7 +294,7 @@ def ingest(
         print(f"  {user_command(env, cmd)}")
         print(f"Then: {user_command(env, ['musicos', 'summary', batch])}")
         return 0
-    if not run_import(run, cmd):
+    if not run_import(run, stream, cmd, progress_log(logs, batch)):
         return 1
     return report_batch(env, run, batch, when, source, http, refresh_plex)
 
@@ -316,6 +318,7 @@ def batch_command(
     read: TagReader,
     run: Run,
     http: Get = http_get,
+    stream: Stream | None = None,
 ) -> int:
     root: Path = args.root.resolve()
     if not root_ok(root, run):
@@ -365,11 +368,8 @@ def batch_command(
         print("dry run: nothing imported. Add --apply to import.")
         return 0
     batch_id = make_batch_id(when, root)
-    out = run(
-        import_command(sources, batch_id, logs, unattended=True, incremental=True)
-    )
-    if out.code != 0:
-        print(f"FAIL import: {first_error(out)}")
+    cmd = import_command(sources, batch_id, logs, unattended=True, incremental=True)
+    if not run_import(run, stream, cmd, progress_log(logs, batch_id)):
         return 1
     return report_batch(env, run, batch_id, when, root, http, not args.no_plex_refresh)
 
@@ -681,7 +681,10 @@ def main(
     env_file: Path = ENV_FILE,
     http: Get = http_get,
     tag_reader: TagReader = read_tags,
+    stream: Stream | None = None,
 ) -> int:
+    if stream is None and run is run_command:
+        stream = stream_command
     if env is None:
         try:
             env = merged_env(env_file, os.environ)
@@ -803,9 +806,10 @@ def main(
             args.unattended,
             http,
             not args.no_plex_refresh,
+            stream,
         )
     if args.command == "batch":
-        return batch_command(env, args, now(), tag_reader, run, http)
+        return batch_command(env, args, now(), tag_reader, run, http, stream)
     if args.command == "split":
         return split(env, run, now(), args, which)
     if args.command == "summary":

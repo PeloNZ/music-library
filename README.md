@@ -80,6 +80,7 @@ All in `beetsdir/logs/` (gitignored).
 |---|---|
 | `changes.jsonl` | One JSON line per action that changed files or tags: `time`, `action`, then fields. Read it with `uv run musicos log`. |
 | `musicos-activity.log` | One text line per run of `lint`, `ingest` or `summary`: that it ran, with counts. |
+| `import-<batch>.out` | Everything beets prints during an unattended import, written as it appears and echoed to the terminal. Follow it with `tail -f beetsdir/logs/import-<batch>.out`. The first line is the command. |
 | `import-<batch>.log` | Written by `beet import -l`: albums beets skipped or imported as-is. `import-<batch>-retry.log` holds the decisions on the skipped albums. |
 
 `uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.

@@ -23,7 +23,7 @@ The command:
 
 For an artist folder with several albums, run `uv run musicos batch <artist-folder>` first. It picks the kept albums and imports them in one run. See "Order of a batch" in the README. `ingest` stays for a single folder, such as a new download.
 
-- Without `--apply` it only previews. With `--apply` it imports unattended, rescans Plex and runs `summary`.
+- Without `--apply` it only previews. With `--apply` it imports unattended, rescans Plex and runs `summary`. Tell the user to follow the import with `tail -f beetsdir/logs/import-<batch>.out`. The batch id is in the first lines of output.
 - `summary` prints one `beet import` command for the albums beets skipped. The user runs it in their own terminal and answers the prompts.
 
 ## Choose a mode with the user
