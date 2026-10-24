@@ -1,5 +1,3 @@
-from collections.abc import Mapping
-
 import pytest
 
 from musicos.plex import (
@@ -11,6 +9,7 @@ from musicos.plex import (
     music_sections,
     parse_sections,
 )
+from tests.fakes import FakeHttp
 
 SECTIONS_JSON = """{"MediaContainer": {"size": 3, "allowSync": false, "Directory": [
  {"key": "1", "type": "movie", "title": "Movies", "agent": "tv.plex.agents.movie",
@@ -66,21 +65,6 @@ def test_choose_section_with_an_unknown_name_lists_the_choices() -> None:
 
 URL = "http://192.168.0.63:32400"
 TOKEN = "s3cr3t-token"
-
-
-class FakeHttp:
-    """Records each request and answers with a fixed response or error."""
-
-    def __init__(self, response: Response | None = None, error: OSError | None = None):
-        self.response = response or Response(200, "")
-        self.error = error
-        self.requests: list[tuple[str, dict[str, str]]] = []
-
-    def __call__(self, url: str, headers: Mapping[str, str]) -> Response:
-        self.requests.append((url, dict(headers)))
-        if self.error:
-            raise self.error
-        return self.response
 
 
 def test_sections_asks_for_json_and_sends_the_token_in_a_header() -> None:
