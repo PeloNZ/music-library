@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from musicos.preflight import check_beetsdir, check_mount, check_plugins
+from musicos.preflight import check_acoustid, check_beetsdir, check_mount, check_plugins
 
 MOUNTS = """\
 /dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)
@@ -70,3 +70,24 @@ def test_missing_plugin_is_named() -> None:
     assert "lastgenre" in result.detail
     assert "embedart" in result.detail
     assert "chroma" not in result.detail
+
+
+def test_acoustid_placeholder_key_fails() -> None:
+    config = {"plugins": "chroma missing", "acoustid": {"apikey": "CHANGE-ME"}}
+
+    result = check_acoustid(config)
+
+    assert not result.ok
+    assert "apikey" in result.detail
+
+
+def test_acoustid_missing_key_fails() -> None:
+    assert not check_acoustid({"plugins": ["chroma"]}).ok
+
+
+def test_acoustid_real_key_passes() -> None:
+    assert check_acoustid({"plugins": "chroma", "acoustid": {"apikey": "k3y"}}).ok
+
+
+def test_acoustid_is_not_needed_without_chroma() -> None:
+    assert check_acoustid({"plugins": "missing"}).ok

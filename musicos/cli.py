@@ -12,7 +12,13 @@ from pathlib import Path
 import yaml
 
 from musicos.lint import activity_line, render_report, run_lint
-from musicos.preflight import Result, check_beetsdir, check_mount, check_plugins
+from musicos.preflight import (
+    Result,
+    check_beetsdir,
+    check_mount,
+    check_plugins,
+    configured_plugins,
+)
 from musicos.runner import Run, run_command
 
 
@@ -22,8 +28,7 @@ def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
         return results
     config = yaml.safe_load((Path(env["BEETSDIR"]) / "config.yaml").read_text())
     results.append(check_mount(config["directory"], run(["mount"]).stdout))
-    plugins = config.get("plugins", "")
-    wanted = plugins.split() if isinstance(plugins, str) else list(plugins)
+    wanted = configured_plugins(config)
     version = run(["beet", "version"])
     if version.code != 0:
         message = version.stderr.strip().splitlines()[:1] or ["beet version failed"]

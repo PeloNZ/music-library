@@ -4,6 +4,7 @@ from pathlib import Path
 
 from musicos.ingest import (
     dry_run_command,
+    has_audio,
     import_command,
     make_batch_id,
     summarize_batch,
@@ -95,3 +96,18 @@ def test_summary_of_an_empty_batch() -> None:
 
     assert summary.albums == 0
     assert summary.flagged == []
+
+
+def test_has_audio_finds_a_track_in_a_subfolder(tmp_path: Path) -> None:
+    (tmp_path / "Disc 1").mkdir()
+    (tmp_path / "Disc 1" / "01 Intro.FLAC").write_bytes(b"")
+
+    assert has_audio(tmp_path)
+
+
+def test_has_audio_ignores_art_and_logs(tmp_path: Path) -> None:
+    (tmp_path / "cover.jpg").write_bytes(b"")
+    (tmp_path / "rip.log").write_text("")
+    (tmp_path / "album.cue").write_text("")
+
+    assert not has_audio(tmp_path)

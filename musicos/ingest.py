@@ -73,3 +73,12 @@ def summarize_batch(run: Run, batch: str) -> BatchSummary:
     )
     albums = json.loads(out.stdout) if out.stdout.strip() else []
     return BatchSummary(len(albums), [a for a in albums if not a.get("mb_albumid")])
+
+
+AUDIO_SUFFIXES = {
+    ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aac", ".wma", ".ape", ".wv",
+}  # fmt: skip
+
+
+def has_audio(source: Path) -> bool:
+    return any(p.suffix.lower() in AUDIO_SUFFIXES for p in source.rglob("*"))

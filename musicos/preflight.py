@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -56,3 +57,19 @@ def check_plugins(version_output: str, required: list[str]) -> Result:
     if missing:
         return Result("plugins", False, "not enabled: " + ", ".join(missing))
     return Result("plugins", True, ", ".join(sorted(enabled)))
+
+
+def configured_plugins(config: Mapping[str, Any]) -> list[str]:
+    """The `plugins:` entry, which beets accepts as a string or a list."""
+    plugins = config.get("plugins", "")
+    return plugins.split() if isinstance(plugins, str) else list(plugins)
+
+
+def check_acoustid(config: Mapping[str, Any]) -> Result:
+    """The chroma plugin needs a real AcoustID key, not the template value."""
+    if "chroma" not in configured_plugins(config):
+        return Result("acoustid", True, "chroma is not enabled")
+    key = (config.get("acoustid") or {}).get("apikey")
+    if not key or key == "CHANGE-ME":
+        return Result("acoustid", False, "set acoustid: apikey: in config.yaml")
+    return Result("acoustid", True, "apikey is set")
