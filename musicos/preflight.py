@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,3 +63,11 @@ def configured_plugins(config: Mapping[str, Any]) -> list[str]:
     """The `plugins:` entry, which beets accepts as a string or a list."""
     plugins = config.get("plugins", "")
     return plugins.split() if isinstance(plugins, str) else list(plugins)
+
+
+def check_tools(names: list[str], which: Callable[[str], str | None]) -> Result:
+    """Every external tool must be on PATH."""
+    missing = [name for name in names if which(name) is None]
+    if missing:
+        return Result("tools", False, f"{', '.join(missing)} not found")
+    return Result("tools", True, ", ".join(names))

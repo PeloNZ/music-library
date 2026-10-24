@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
@@ -30,9 +31,11 @@ from musicos.preflight import (
     check_beetsdir,
     check_mount,
     check_plugins,
+    check_tools,
     configured_plugins,
 )
 from musicos.runner import Run, run_command
+from musicos.split import SplitError, cue_track_count, read_cue, scan, split_rip
 
 
 def load_config(env: Mapping[str, str]) -> dict[str, Any]:
@@ -180,11 +183,62 @@ def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
     return 0
 
 
+def split(
+    env: Mapping[str, str],
+    run: Run,
+    when: datetime,
+    args: argparse.Namespace,
+    which: Callable[[str], str | None],
+) -> int:
+    tools = check_tools(["cuebreakpoints", "shnsplit", "cuetag.sh"], which)
+    if not tools.ok:
+        print_results([tools])
+        return 1
+    root, inbox, holding = (p.resolve() for p in (args.root, args.inbox, args.holding))
+    for name, folder in (("inbox", inbox), ("holding", holding)):
+        if folder == root or root in folder.parents:
+            print(f"FAIL {name}: {folder} is inside {root}; a later scan would find it")
+            return 1
+    found = scan(root)
+    for rip in found.rips:
+        count = cue_track_count(read_cue(rip.cue))
+        print(f"  {rip.folder.relative_to(root)} ({count} tracks)")
+    if found.ambiguous:
+        names = ", ".join(str(p.relative_to(root)) for p in found.ambiguous)
+        print(f"ambiguous (one FLAC, several cue sheets): {names}")
+    if not args.apply:
+        print("dry run: nothing changed. Add --apply to split.")
+        return 0
+    failed = False
+    for rip in found.rips:
+        label = rip.folder.relative_to(root)
+        try:
+            result = split_rip(rip, inbox, holding, run)
+        except SplitError as exc:
+            print(f"FAIL {label}: {exc}")
+            failed = True
+            continue
+        record(
+            Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+            "split",
+            when,
+            source=str(rip.folder),
+            flac=rip.flac.name,
+            cue=rip.cue.name,
+            track_count=result.track_count,
+            tracks=[str(t) for t in result.tracks],
+            holding=str(result.holding),
+        )
+        print(f"ok   {label}: {result.track_count} tracks in {inbox / rip.folder.name}")
+    return 1 if failed else 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     env: Mapping[str, str] = os.environ,
     run: Run = run_command,
     now: Callable[[], datetime] = datetime.now,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> int:
     parser = argparse.ArgumentParser(prog="musicos")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -201,6 +255,13 @@ def main(
     )
     summary_parser = commands.add_parser("summary", help="report on an import batch")
     summary_parser.add_argument("batch")
+    split_parser = commands.add_parser("split", help="split FLAC + cue rips")
+    split_parser.add_argument("root", type=Path, help="folder to scan")
+    split_parser.add_argument("--inbox", type=Path, required=True)
+    split_parser.add_argument("--holding", type=Path, required=True)
+    split_parser.add_argument(
+        "--apply", action="store_true", help="split (default is a dry run)"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -217,6 +278,8 @@ def main(
         return lint(env, run, now())
     if args.command == "ingest":
         return ingest(env, run, now(), args.source, args.unattended)
+    if args.command == "split":
+        return split(env, run, now(), args, which)
     if args.command == "summary":
         return report_batch(env, run, args.batch, now())
     return 0

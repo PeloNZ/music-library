@@ -6,6 +6,8 @@ import pytest
 from musicos.changelog import read_entries, record
 from musicos.cli import main
 from musicos.runner import Output, Run
+from tests.fakes import Tools
+from tests.test_split import CUE
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"
@@ -517,3 +519,186 @@ def test_rerunning_summary_does_not_record_the_import_twice(
     assert code == 0
     assert len(read_entries(beets / "logs" / "changes.jsonl")) == 1
     assert "already in the change log" in capsys.readouterr().out
+
+
+class SplitTools(Tools):
+    """Tools fake that also answers the preflight commands."""
+
+    def __call__(self, cmd: list[str]) -> Output:
+        if cmd[0] == "mount":
+            return Output(MOUNTS, "", 0)
+        if cmd == ["beet", "version"]:
+            return Output(VERSION, "", 0)
+        return super().__call__(cmd)
+
+
+def make_rips(root: Path, *names: str) -> None:
+    for name in names:
+        folder = root / name
+        folder.mkdir(parents=True)
+        (folder / "a.flac").write_bytes(b"big")
+        (folder / "a.cue").write_text(CUE)
+
+
+def have_tools(name: str) -> str | None:
+    return f"/usr/bin/{name}"
+
+
+def split_args(root: Path, *extra: str) -> list[str]:
+    return [
+        "split",
+        str(root / "src"),
+        "--inbox",
+        str(root / "inbox"),
+        "--holding",
+        str(root / "holding"),
+        *extra,
+    ]
+
+
+def test_split_without_apply_lists_rips_and_changes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted", "Sonoran")
+    tools = SplitTools()
+
+    code = main(
+        split_args(tmp_path),
+        env=make_beetsdir(beets),
+        run=tools,
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Deserted (3 tracks)" in out and "Sonoran (3 tracks)" in out
+    assert "dry run: nothing changed. Add --apply to split." in out
+    assert [c[0] for c in tools.commands if c[0] == "shnsplit"] == []
+    assert (tmp_path / "src" / "Deserted" / "a.flac").exists()
+    assert not (beets / "logs" / "changes.jsonl").exists()
+
+
+def test_split_apply_splits_and_records_each_rip(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert code == 0
+    album = tmp_path / "inbox" / "Deserted"
+    held = tmp_path / "holding" / "Deserted"
+    assert not (tmp_path / "src" / "Deserted").exists()
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry == {
+        "time": "2026-10-24T21:30:05",
+        "action": "split",
+        "source": str(tmp_path / "src" / "Deserted"),
+        "flac": "a.flac",
+        "cue": "a.cue",
+        "track_count": 3,
+        "tracks": [str(album / f"split-track0{n}.flac") for n in (1, 2, 3)],
+        "holding": str(held),
+    }
+
+
+def test_split_apply_reports_a_failed_rip_and_carries_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Bad", "Good")
+    (tmp_path / "src" / "Bad" / "a.cue").write_text('PERFORMER "x"\n')
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert code == 1
+    assert "FAIL Bad: a.cue lists no audio tracks" in capsys.readouterr().out
+    assert (tmp_path / "holding" / "Good").exists()
+    assert (tmp_path / "src" / "Bad" / "a.flac").exists()
+    assert len(read_entries(beets / "logs" / "changes.jsonl")) == 1
+
+
+def test_split_lists_ambiguous_folders_and_does_not_split_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Heritage")
+    (tmp_path / "src" / "Heritage" / "b.cue").write_text(CUE)
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "ambiguous (one FLAC, several cue sheets): Heritage" in out
+    assert (tmp_path / "src" / "Heritage" / "a.flac").exists()
+
+
+def test_split_refuses_a_holding_folder_inside_the_scanned_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    code = main(
+        [
+            "split",
+            str(tmp_path / "src"),
+            "--inbox",
+            str(tmp_path / "inbox"),
+            "--holding",
+            str(tmp_path / "src" / "_holding"),
+            "--apply",
+        ],
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert code == 1
+    assert "FAIL holding" in capsys.readouterr().out
+    assert (tmp_path / "src" / "Deserted" / "a.flac").exists()
+
+
+def test_split_stops_when_a_tool_is_not_installed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    code = main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=lambda name: None if name == "shnsplit" else f"/usr/bin/{name}",
+    )
+
+    assert code == 1
+    assert "FAIL tools: shnsplit not found" in capsys.readouterr().out
+    assert (tmp_path / "src" / "Deserted" / "a.flac").exists()
