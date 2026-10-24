@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from musicos.batch import plan_batch
-from musicos.dupes import find_duplicates
+from musicos.batch import BatchPlan, plan_batch
+from musicos.dupes import Release, find_duplicates
 from tests.test_dupes import rel
 
 
-def plan(releases, status=None):  # type: ignore[no-untyped-def]
+def plan(releases: list[Release], status: dict[str, str] | None = None) -> BatchPlan:
     return plan_batch(releases, find_duplicates(releases), status or {})
 
 
