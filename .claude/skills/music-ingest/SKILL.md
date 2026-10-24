@@ -42,4 +42,3 @@ After an import, `summary` and `ingest --unattended` rescan the Plex music libra
 
 - The source folder is not changed. `import.copy: yes` keeps the original files until the user approves move mode.
 - A cue-sheet rip (one FLAC plus a `.cue`) imports as a single track. Split it first.
-- The code and tests live in `musicos/ingest.py` and `tests/test_ingest.py`.

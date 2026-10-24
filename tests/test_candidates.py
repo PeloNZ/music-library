@@ -104,6 +104,30 @@ def test_a_candidate_is_stale_when_the_copy_that_outranked_it_is_gone(
     assert [status_of(e) for e in read_entries(log)] == ["stale", "stale"]
 
 
+def test_a_candidate_stays_open_while_one_of_two_tied_keepers_remains(
+    tmp_path: Path,
+) -> None:
+    first, second, mp3 = make(tmp_path)
+    log = tmp_path / "logs" / "deletion-candidates.jsonl"
+    tie = decide(
+        [
+            rel(str(first), tracks=11, kind="flac", cue=False),
+            rel(str(second), tracks=11, kind="flac", cue=False),
+            rel(str(mp3), tracks=11, kind="lossy", cue=False, fmt="MP3 320k"),
+        ]
+    )
+    record_candidates(log, tie, tmp_path, WHEN)
+    (second / "a.flac").unlink()
+    second.rmdir()
+
+    assert [status_of(e) for e in read_entries(log)] == ["open"]
+
+    (first / "a.flac").unlink()
+    first.rmdir()
+
+    assert [status_of(e) for e in read_entries(log)] == ["stale"]
+
+
 def test_list_candidates_hides_done_ones_unless_asked(tmp_path: Path) -> None:
     split, rip, mp3 = make(tmp_path)
     log = tmp_path / "logs" / "deletion-candidates.jsonl"

@@ -138,3 +138,9 @@ def test_activity_line_counts_albums_with_gaps_and_gaps() -> None:
         activity_line(results, 3, WHEN)
         == "2026-10-24 22:40:00 gaps 3 albums checked, 2 with gaps, 3 gaps"
     )
+
+
+def test_a_year_that_beets_exports_as_four_zeros_is_a_gap() -> None:
+    results = find_gaps([album(album="A", year="0000")])
+
+    assert names(results, "no year") == ["A"]

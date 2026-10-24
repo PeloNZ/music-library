@@ -6,7 +6,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from musicos.dupes import _most_common
+from musicos.changelog import stamp
+from musicos.dupes import most_common
 from musicos.rules import Decision
 
 ACTIONS = {
@@ -17,14 +18,10 @@ ACTIONS = {
 }
 
 
-def _when(when: datetime) -> str:
-    return when.strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _title(group: list[Decision]) -> str:
     releases = [d.release for d in group]
-    artist = _most_common([r.artist for r in releases], "?")
-    album = _most_common([r.album for r in releases]) or releases[0].folder.name
+    artist = most_common([r.artist for r in releases], "?")
+    album = most_common([r.album for r in releases]) or releases[0].folder.name
     return f"{artist} - {album} (disc {releases[0].disc})"
 
 
@@ -54,7 +51,7 @@ def render_report(
 ) -> str:
     plural = "group" if len(groups) == 1 else "groups"
     summary = (
-        f"Run at {_when(when)}. {checked} folders checked under {root}. "
+        f"Run at {stamp(when)}. {checked} folders checked under {root}. "
         f"{len(groups)} {plural} found."
     )
     lines = ["# Duplicate albums", "", summary]
@@ -89,6 +86,6 @@ def activity_line(groups: list[list[Decision]], checked: int, when: datetime) ->
     candidates = len(_candidates(groups))
     noun = "candidate" if candidates == 1 else "candidates"
     return (
-        f"{_when(when)} dupes {checked} folders checked, {len(groups)} groups, "
+        f"{stamp(when)} dupes {checked} folders checked, {len(groups)} groups, "
         f"{members} folders in groups, {candidates} deletion {noun}"
     )

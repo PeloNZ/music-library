@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from musicos.runner import Output, Run
+from musicos.runner import Output, Run, first_error
 
 SLUG_LIMIT = 40
 
@@ -23,7 +23,7 @@ def make_batch_id(when: datetime, source: Path) -> str:
         .lower()
     )
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:SLUG_LIMIT].strip("-")
-    return f"{when:%Y%m%d-%H%M}-{slug}"
+    return f"{when:%Y%m%d-%H%M}-{slug or 'import'}"
 
 
 def dry_run_command(source: Path) -> list[str]:
@@ -49,8 +49,7 @@ def import_command(source: Path, batch: str, logs: Path, unattended: bool) -> li
 
 def _raise_on_failure(out: Output) -> None:
     if out.code != 0:
-        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
-        raise RuntimeError(message[0])
+        raise RuntimeError(first_error(out))
 
 
 EXPORT_FIELDS = "id,album,albumartist,year,mb_albumid,albumtypes"
@@ -88,7 +87,10 @@ AUDIO_SUFFIXES = {
 
 
 def has_audio(source: Path) -> bool:
-    return any(p.suffix.lower() in AUDIO_SUFFIXES for p in source.rglob("*"))
+    return any(
+        p.suffix.lower() in AUDIO_SUFFIXES and not p.name.startswith("._")
+        for p in source.rglob("*")
+    )
 
 
 def batch_items(run: Run, batch: str) -> list[str]:

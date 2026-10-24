@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from musicos.changelog import stamp
 from musicos.runner import Output, Run
 
 EXAMPLE_LIMIT = 10
@@ -99,15 +100,11 @@ def run_lint(run: Run) -> list[CheckResult]:
     return results
 
 
-def _when(when: datetime) -> str:
-    return when.strftime("%Y-%m-%d %H:%M:%S")
-
-
 def render_report(results: list[CheckResult], when: datetime) -> str:
     lines = [
         "# Library health report",
         "",
-        f"Run at {_when(when)}",
+        f"Run at {stamp(when)}",
         "",
         "| Check | Findings |",
         "|---|---|",
@@ -130,4 +127,4 @@ def render_report(results: list[CheckResult], when: datetime) -> str:
 def activity_line(results: list[CheckResult], when: datetime) -> str:
     issues = sum(r.count for r in results)
     categories = sum(1 for r in results if r.count > 0)
-    return f"{_when(when)} lint {issues} issues across {categories} categories"
+    return f"{stamp(when)} lint {issues} issues across {categories} categories"

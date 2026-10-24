@@ -8,6 +8,7 @@ bytes are the AppleDouble header, so a real file with such a name is safe.
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,7 +16,7 @@ APPLEDOUBLE_MAGIC = bytes([0x00, 0x05, 0x16, 0x07])
 
 
 def _is_shadow(path: Path) -> bool:
-    if path.is_symlink():
+    if not stat.S_ISREG(path.lstat().st_mode):  # a FIFO would block on open
         return False
     with path.open("rb") as f:
         return f.read(len(APPLEDOUBLE_MAGIC)) == APPLEDOUBLE_MAGIC
@@ -28,7 +29,13 @@ def find_appledouble(root: Path) -> list[Path]:
     for folder, _, names in os.walk(root, followlinks=False):
         for name in names:
             path = Path(folder) / name
-            if name.startswith("._") and _is_shadow(path):
+            if not name.startswith("._"):
+                continue
+            try:
+                shadow = _is_shadow(path)
+            except OSError:
+                continue  # a file that cannot be read is not deleted either
+            if shadow:
                 found.append(path)
     return sorted(found)
 

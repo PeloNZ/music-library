@@ -11,6 +11,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import Any
 
 
 class PlexError(Exception):
@@ -26,21 +27,20 @@ class Section:
 
 
 def parse_sections(body: str) -> list[Section]:
-    """The libraries in a `/library/sections` JSON response, with every folder.
-
-    JSON is requested on purpose: it needs no XML parser, which could be fed a
-    hostile document over plain HTTP.
-    """
-    container = json.loads(body)["MediaContainer"]
-    return [
-        Section(
-            id=str(d["key"]),
-            type=d["type"],
-            title=d["title"],
-            locations=[loc["path"] for loc in d.get("Location", [])],
-        )
-        for d in container.get("Directory", [])
-    ]
+    """The libraries in a `/library/sections` JSON response, with every folder."""
+    try:
+        container = json.loads(body)["MediaContainer"]
+        return [
+            Section(
+                id=str(d["key"]),
+                type=d["type"],
+                title=d["title"],
+                locations=[loc["path"] for loc in d.get("Location", [])],
+            )
+            for d in container.get("Directory", [])
+        ]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise PlexError("Plex sent a reply that is not a library list") from exc
 
 
 def music_sections(sections: list[Section]) -> list[Section]:
@@ -77,11 +77,20 @@ class Response:
 Get = Callable[[str, Mapping[str, str]], Response]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would send the token header to another host."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 def http_get(url: str, headers: Mapping[str, str]) -> Response:
-    """The one real network call. An HTTP error status is returned, not raised."""
+    """The one real network call. An HTTP error status, a redirect included, is
+    returned, not raised or followed."""
     request = urllib.request.Request(url, headers=dict(headers))
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=10) as reply:
+        with opener.open(request, timeout=10) as reply:
             return Response(reply.status, reply.read().decode())
     except urllib.error.HTTPError as exc:
         return Response(exc.code, "")
@@ -126,6 +135,6 @@ def section_for_path(path: PurePosixPath, sections: list[Section]) -> Section | 
     for section in music_sections(sections):
         for location in section.locations:
             root = PurePosixPath(location)
-            if path == root or root in path.parents:
+            if path.is_relative_to(root):
                 return section
     return None

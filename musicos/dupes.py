@@ -18,14 +18,13 @@ from pathlib import Path
 import mutagen
 
 from musicos.ingest import AUDIO_SUFFIXES
-from musicos.split import cue_track_count, read_cue
+from musicos.split import cue_track_count, files_with_suffix, read_cue
 
 
 @dataclass(frozen=True)
 class Tags:
     album: str
     artist: str
-    year: str
     disc: str
     length: float
     fmt: str
@@ -40,7 +39,6 @@ class Release:
     folder: Path
     artist: str
     album: str
-    year: str
     disc: str
     tracks: int
     seconds: float
@@ -48,17 +46,11 @@ class Release:
     size: int
     cue: bool
     unreadable: int
-    kind: str = "flac"
+    kind: str = "flac"  # flac, lossless, lossy or unknown (no file could be read)
 
 
 def _audio_files(folder: Path) -> list[Path]:
-    return sorted(
-        p
-        for p in folder.iterdir()
-        if p.is_file()
-        and not p.name.startswith("._")
-        and p.suffix.lower() in AUDIO_SUFFIXES
-    )
+    return files_with_suffix(folder, *AUDIO_SUFFIXES)
 
 
 def audio_folders(root: Path) -> list[Path]:
@@ -70,24 +62,27 @@ def audio_folders(root: Path) -> list[Path]:
     )
 
 
-def _most_common(values: list[str], default: str = "") -> str:
+def most_common(values: list[str], default: str = "") -> str:
     counted = Counter(v for v in values if v)
     return counted.most_common(1)[0][0] if counted else default
 
 
+def _printable(text: str) -> str:
+    """Control characters in a tag or cue name would act on the terminal."""
+    return re.sub(r"[\x00-\x1f\x7f]", "?", text)
+
+
 def cue_header(text: str) -> dict[str, str]:
-    """Artist, album and year from the lines before the first TRACK."""
+    """Artist and album from the lines before the first TRACK."""
     header: dict[str, str] = {}
     for line in text.splitlines():
         line = line.strip()
         if re.match(r"TRACK\s+\d+", line, re.IGNORECASE):
             break
         if match := re.match(r'PERFORMER\s+"(.*)"', line, re.IGNORECASE):
-            header.setdefault("artist", match[1])
+            header.setdefault("artist", _printable(match[1]))
         elif match := re.match(r'TITLE\s+"(.*)"', line, re.IGNORECASE):
-            header.setdefault("album", match[1])
-        elif match := re.match(r"REM\s+DATE\s+(\S+)", line, re.IGNORECASE):
-            header.setdefault("year", match[1])
+            header.setdefault("album", _printable(match[1]))
     return header
 
 
@@ -97,32 +92,29 @@ def describe(folder: Path, read_tags: TagReader) -> Release:
     from the cue sheet."""
     files = _audio_files(folder)
     tags = [t for t in (read_tags(p) for p in files) if t]
-    artist = _most_common([t.artist for t in tags])
-    album = _most_common([t.album for t in tags])
-    year = _most_common([t.year for t in tags])
+    artist = most_common([t.artist for t in tags])
+    album = most_common([t.album for t in tags])
     tracks = len(files)
-    cues = sorted(p for p in folder.iterdir() if p.suffix.lower() == ".cue")
-    is_rip = len(files) == 1 and bool(cues)
+    cues = files_with_suffix(folder, ".cue") if len(files) == 1 else []
+    is_rip = bool(cues)
     if is_rip:
         text = read_cue(cues[0])
         header = cue_header(text)
         artist = artist or header.get("artist", "")
         album = album or header.get("album", "")
-        year = year or header.get("year", "")
         tracks = cue_track_count(text)
     return Release(
         folder=folder,
         artist=artist,
         album=album,
-        year=year,
-        disc=_most_common([t.disc for t in tags], "1"),
+        disc=most_common([t.disc for t in tags], "1"),
         tracks=tracks,
         seconds=sum(t.length for t in tags),
-        fmt=_most_common([t.fmt for t in tags]),
+        fmt=most_common([t.fmt for t in tags]),
         size=sum(p.stat().st_size for p in files),
         cue=is_rip,
         unreadable=len(files) - len(tags),
-        kind=_most_common([t.kind for t in tags], "lossy"),
+        kind=most_common([t.kind for t in tags], "unknown"),
     )
 
 
@@ -179,6 +171,9 @@ LOSSLESS_TYPES = {
     "MonkeysAudio",
     "WavPack",
     "TrueAudio",
+    "EasyTrueAudio",
+    "TAK",
+    "OggFLAC",
     "OptimFROG",
     "DSF",
     "DSDIFF",
@@ -220,7 +215,7 @@ def read_tags(path: Path) -> Tags | None:
 
     def first(key: str) -> str:
         values = audio.get(key) or [""]
-        return str(values[0]).strip()
+        return _printable(str(values[0]).strip())
 
     info = audio.info
     suffix = path.suffix.lstrip(".").upper()
@@ -238,7 +233,6 @@ def read_tags(path: Path) -> Tags | None:
     return Tags(
         album=first("album"),
         artist=first("albumartist") or first("artist"),
-        year=first("date")[:4],
         disc=_disc(first("discnumber")),
         length=float(info.length),
         fmt=fmt,

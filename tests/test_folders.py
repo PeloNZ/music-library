@@ -126,3 +126,17 @@ def test_running_it_twice_changes_nothing_the_second_time(tmp_path: Path) -> Non
 
     assert not again.made
     assert not again.plexignore_written
+
+
+def test_a_plexignore_that_is_a_dangling_symlink_is_not_written_through(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path / "victim.txt"
+    folder = tmp_path / "inbox"
+    folder.mkdir()
+    (folder / ".plexignore").symlink_to(victim)
+
+    result = create_plex_free_folder(folder)
+
+    assert not victim.exists()
+    assert result.plexignore_written is False

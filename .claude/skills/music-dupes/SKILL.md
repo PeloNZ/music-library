@@ -34,10 +34,9 @@ Priority, highest first:
 1. Run `dupes` on one artist folder, then `candidates`.
 2. Report the groups, the candidates with their size, the ties and the reviews.
 3. For a tie or a review, ask the user which copy to keep. Do not guess.
-4. Do not delete, move or rename a candidate. The user removes them by hand. A candidate whose folder is gone shows as done and is hidden. A candidate marked `stale` lost the copy that outranked it. Tell the user not to delete it.
+4. Do not delete, move or rename a candidate. The user removes them by hand. A candidate whose folder is gone shows as done and is hidden. A candidate marked `stale` lost every copy that outranked it. Tell the user not to delete it.
 5. Run `dupes` before `split`: do not split a cue rip that is a candidate.
 
 ## Notes
 
 - Run `dupes` on an artist folder, not the whole share. It reads every audio file's tags over SMB.
-- The code is `musicos/dupes.py`, `rules.py`, `dupereport.py` and `candidates.py`, with tests.

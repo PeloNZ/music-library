@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from musicos.runner import Run
+from musicos.changelog import stamp
+from musicos.runner import Run, first_error
 
 Album = dict[str, Any]
 
@@ -31,8 +32,10 @@ class GapResult:
 
 
 def _missing(value: object) -> bool:
-    """beets exports a missing field as an empty string, and a missing year as 0."""
-    return value is None or str(value).strip() in ("", "0")
+    """beets exports a missing field as an empty string, and a missing year as
+    zero padded to four digits (`0000`)."""
+    text = "" if value is None else str(value).strip()
+    return text == "" or (text.isdecimal() and int(text) == 0)
 
 
 def find_gaps(albums: list[Album]) -> list[GapResult]:
@@ -45,14 +48,9 @@ def find_gaps(albums: list[Album]) -> list[GapResult]:
 def export_albums(run: Run) -> list[Album]:
     out = run(["beet", "export", "-a", "-f", "json", "-i", EXPORT_FIELDS])
     if out.code != 0:
-        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
-        raise RuntimeError(message[0])
+        raise RuntimeError(first_error(out))
     albums: list[Album] = json.loads(out.stdout) if out.stdout.strip() else []
     return albums
-
-
-def _when(when: datetime) -> str:
-    return when.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _label(album: Album) -> str:
@@ -65,7 +63,7 @@ def render_report(results: list[GapResult], checked: int, when: datetime) -> str
     lines = [
         "# Metadata gaps",
         "",
-        f"Run at {_when(when)}. {checked} albums checked.",
+        f"Run at {stamp(when)}. {checked} albums checked.",
         "",
         "| Gap | Albums |",
         "|---|---|",
@@ -81,6 +79,6 @@ def activity_line(results: list[GapResult], checked: int, when: datetime) -> str
     with_gaps = {id(a) for r in results for a in r.albums}
     gaps = sum(len(r.albums) for r in results)
     return (
-        f"{_when(when)} gaps {checked} albums checked, "
+        f"{stamp(when)} gaps {checked} albums checked, "
         f"{len(with_gaps)} with gaps, {gaps} gaps"
     )

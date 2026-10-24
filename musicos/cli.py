@@ -17,7 +17,13 @@ import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.candidates import list_candidates, record_candidates
-from musicos.changelog import filter_entries, format_entry, read_entries, record
+from musicos.changelog import (
+    filter_entries,
+    format_entry,
+    read_entries,
+    record,
+    stamp,
+)
 from musicos.dupereport import activity_line as dupes_activity_line
 from musicos.dupereport import render_report as render_dupes_report
 from musicos.dupes import (
@@ -32,6 +38,7 @@ from musicos.folders import (
     FolderError,
     check_outside_plex,
     create_plex_free_folder,
+    env_path_map,
     parse_path_map,
     to_server_path,
 )
@@ -65,7 +72,7 @@ from musicos.preflight import (
     configured_plugins,
 )
 from musicos.rules import decide
-from musicos.runner import Run, run_command
+from musicos.runner import Run, first_error, run_command
 from musicos.split import (
     SplitError,
     check_one_share,
@@ -96,8 +103,9 @@ def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
     wanted = configured_plugins(config)
     version = run(["beet", "version"])
     if version.code != 0:
-        message = version.stderr.strip().splitlines()[:1] or ["beet version failed"]
-        results.append(Result("beet", False, message[0]))
+        results.append(
+            Result("beet", False, first_error(version, "beet version failed"))
+        )
         return results
     results.append(check_plugins(version.stdout, wanted))
     return results
@@ -111,7 +119,7 @@ def print_results(results: list[Result]) -> bool:
 
 def lint(env: Mapping[str, str], run: Run, when: datetime) -> int:
     checks = run_lint(run)
-    logs = Path(env["BEETSDIR"]) / "logs"
+    logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     report = logs / "last-health-report.md"
     report.write_text(render_report(checks, when))
@@ -122,8 +130,16 @@ def lint(env: Mapping[str, str], run: Run, when: datetime) -> int:
     return 1 if any(c.error for c in checks) else 0
 
 
+def logs_dir(env: Mapping[str, str]) -> Path:
+    return Path(env["BEETSDIR"]) / "logs"
+
+
+def changes_log(env: Mapping[str, str]) -> Path:
+    return logs_dir(env) / "changes.jsonl"
+
+
 def log_activity(env: Mapping[str, str], line: str) -> None:
-    logs = Path(env["BEETSDIR"]) / "logs"
+    logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     with (logs / "musicos-activity.log").open("a") as log:
         log.write(line + "\n")
@@ -148,7 +164,7 @@ def report_batch(
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:
         print(f"  - {a.get('albumartist', '?')} - {a.get('album', '?')}")
-    import_log = Path(env["BEETSDIR"]) / "logs" / f"import-{batch}.log"
+    import_log = logs_dir(env) / f"import-{batch}.log"
     logged = parse_import_log(import_log.read_text()) if import_log.exists() else []
     if logged:
         print(f"{len(logged)} logged by the importer (not imported as matched):")
@@ -157,7 +173,7 @@ def report_batch(
     fields: dict[str, Any] = {"batch": batch}
     if source is not None:
         fields["source"] = str(source)
-    changes = Path(env["BEETSDIR"]) / "logs" / "changes.jsonl"
+    changes = changes_log(env)
     already = any(
         e["action"] == "import" and e.get("batch") == batch
         for e in read_entries(changes)
@@ -177,7 +193,7 @@ def report_batch(
         )
     log_activity(
         env,
-        f"{when:%Y-%m-%d %H:%M:%S} ingest {batch} {summary.albums} albums, {flagged} flagged",
+        f"{stamp(when)} ingest {batch} {summary.albums} albums, {flagged} flagged",
     )
     if refresh_plex and not already:
         rescan_plex(env, http, when, batch)
@@ -195,7 +211,7 @@ def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -
         print(f"plex: not refreshed ({exc})")
         return
     try:
-        maps = parse_path_map([m for m in env.get("PLEX_PATH_MAP", "").split(",") if m])
+        maps = parse_path_map(env_path_map(env))
         library = Path(load_config(env)["directory"])
         server = to_server_path(library, maps)
         if server is None:
@@ -210,7 +226,7 @@ def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -
         print(f"WARN plex: not refreshed: {exc}")
         return
     record(
-        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        changes_log(env),
         "plex-refresh",
         when,
         batch=batch,
@@ -235,14 +251,11 @@ def ingest(
         print(f"FAIL source: no audio files under {source}")
         return 1
     batch = make_batch_id(when, source)
-    logs = Path(env["BEETSDIR"]) / "logs"
+    logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     dry_run = run(dry_run_command(source))
     if dry_run.code != 0:
-        message = dry_run.stderr.strip().splitlines()[:1] or [
-            f"exit code {dry_run.code}"
-        ]
-        print(f"FAIL dry run: {message[0]}")
+        print(f"FAIL dry run: {first_error(dry_run)}")
         return 1
     # beets prints the --pretend file list to stderr
     print(dry_run.stderr or dry_run.stdout, end="")
@@ -254,19 +267,16 @@ def ingest(
         return 0
     out = run(cmd)
     if out.code != 0:
-        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
-        print(f"FAIL import: {message[0]}")
+        print(f"FAIL import: {first_error(out)}")
         return 1
     return report_batch(env, run, batch, when, source, http, refresh_plex)
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
-    beetsdir = check_beetsdir(env)
-    if not beetsdir.ok:
-        print_results([beetsdir])
+    if not beetsdir_ok(env):
         return 1
     try:
-        entries = read_entries(Path(env["BEETSDIR"]) / "logs" / "changes.jsonl")
+        entries = read_entries(changes_log(env))
     except ValueError as exc:
         print(f"FAIL log: {exc}")
         return 1
@@ -293,7 +303,7 @@ def split(
         return 1
     root, inbox, holding = (p.resolve() for p in (args.root, args.inbox, args.holding))
     for name, folder in (("inbox", inbox), ("holding", holding)):
-        if folder == root or root in folder.parents:
+        if folder.is_relative_to(root):
             print(f"FAIL {name}: {folder} is inside {root}; a later scan would find it")
             return 1
     try:
@@ -321,17 +331,17 @@ def split(
             failed = True
             continue
         record(
-            Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+            changes_log(env),
             "split",
             when,
             source=str(rip.folder),
             flac=rip.flac.name,
             cue=rip.cue.name,
-            track_count=result.track_count,
+            track_count=len(result.tracks),
             tracks=[str(t) for t in result.tracks],
             holding=str(result.holding),
         )
-        print(f"ok   {label}: {result.track_count} tracks in {inbox / rip.folder.name}")
+        print(f"ok   {label}: {len(result.tracks)} tracks in {inbox / rip.folder.name}")
     return 1 if failed else 0
 
 
@@ -339,7 +349,7 @@ def plex_command(
     env: Mapping[str, str], args: argparse.Namespace, when: datetime, http: Get
 ) -> int:
     refreshing = args.plex_command == "refresh"
-    if refreshing and not print_results_if_failed([check_beetsdir(env)]):
+    if refreshing and not beetsdir_ok(env):
         return 1  # a rescan is a change, so it must be logged
     try:
         plex = plex_from_env(env, http)
@@ -356,7 +366,7 @@ def plex_command(
         print(f"FAIL plex: {exc}")
         return 1
     record(
-        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        changes_log(env),
         "plex-refresh",
         when,
         section=section.id,
@@ -370,7 +380,7 @@ def plex_command(
 def folders_command(
     env: Mapping[str, str], args: argparse.Namespace, when: datetime, http: Get
 ) -> int:
-    if args.apply and not print_results_if_failed([check_beetsdir(env)]):
+    if args.apply and not beetsdir_ok(env):
         return 1  # making the folders is a change, so it must be logged
     plan: list[tuple[Path, PurePosixPath]] = []
     try:
@@ -379,7 +389,7 @@ def folders_command(
         print(f"FAIL plex: {exc}")
         return 1
     libraries = [PurePosixPath(p) for section in sections for p in section.locations]
-    from_env = [m for m in env.get("PLEX_PATH_MAP", "").split(",") if m]
+    from_env = env_path_map(env)
     try:
         maps = parse_path_map(args.path_map or from_env)
         for folder in (args.inbox.resolve(), args.holding.resolve()):
@@ -408,7 +418,7 @@ def folders_command(
         print("already in place")
         return 0
     record(
-        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        changes_log(env),
         "folders",
         when,
         created=created,
@@ -426,7 +436,7 @@ def gaps(env: Mapping[str, str], run: Run, when: datetime) -> int:
         print(f"FAIL gaps: {exc}")
         return 1
     results = find_gaps(albums)
-    logs = Path(env["BEETSDIR"]) / "logs"
+    logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     report = logs / "last-gaps-report.md"
     report.write_text(render_gaps_report(results, len(albums), when))
@@ -447,7 +457,7 @@ def clean_appledouble(
     if not root.is_dir():
         print(f"FAIL root: {root} is not a folder")
         return 1
-    if args.apply and not print_results_if_failed([check_beetsdir(env)]):
+    if args.apply and not beetsdir_ok(env):
         return 1  # deleting is a change, so it must be logged
     found = find_appledouble(root)
     if not found:
@@ -468,7 +478,7 @@ def clean_appledouble(
         print(f"FAIL {path.name}: {reason}")
     if result.deleted:
         record(
-            Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+            changes_log(env),
             "clean-appledouble",
             when,
             root=str(root),
@@ -487,12 +497,12 @@ def dupes(
     if not root.is_dir():
         print(f"FAIL root: {root} is not a folder")
         return 1
-    if not print_results_if_failed([check_beetsdir(env)]):
+    if not beetsdir_ok(env):
         return 1  # the report is written under BEETSDIR
     releases = [describe(folder, read) for folder in audio_folders(root)]
     groups = [decide(g) for g in find_duplicates(releases)]
     report = render_dupes_report(groups, len(releases), root, when)
-    logs = Path(env["BEETSDIR"]) / "logs"
+    logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     (logs / "last-duplicates-report.md").write_text(report)
     log_activity(env, dupes_activity_line(groups, len(releases), when))
@@ -507,13 +517,14 @@ def dupes(
 
 
 def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
-    if not print_results_if_failed([check_beetsdir(env)]):
+    if not beetsdir_ok(env):
         return 1
-    log = Path(env["BEETSDIR"]) / "logs" / "deletion-candidates.jsonl"
-    if not read_entries(log):
+    log = logs_dir(env) / "deletion-candidates.jsonl"
+    everything = list_candidates(log, include_done=True)
+    if not everything:
         print("no deletion candidates recorded")
         return 0
-    listed = list_candidates(log, include_done=args.all)
+    listed = everything if args.all else [(e, s) for e, s in everything if s != "done"]
     if not listed:
         print("no open deletion candidates")
         return 0
@@ -529,7 +540,7 @@ def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
         print(f"       why: {entry['rule']}")
         print(f"       kept: {'; '.join(entry['kept_by'])}")
         if status == "stale":
-            print("       do not delete: a copy that outranked it is missing")
+            print("       do not delete: every copy that outranked it is missing")
     summary = f"{counts['open']} open ({open_bytes / 1048576:.0f} MiB), {counts['stale']} stale"
     if args.all:
         summary += f", {counts['done']} done"
@@ -543,6 +554,10 @@ def print_results_if_failed(results: list[Result]) -> bool:
     if failed:
         print_results(failed)
     return not failed
+
+
+def beetsdir_ok(env: Mapping[str, str]) -> bool:
+    return print_results_if_failed([check_beetsdir(env)])
 
 
 def main(

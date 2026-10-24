@@ -13,7 +13,7 @@ from musicos.split import (
     scan,
     split_rip,
 )
-from tests.fakes import Tools
+from tests.fakes import Tools, on_another_device
 
 CUE = """\
 REM GENRE "Death Metal"
@@ -58,6 +58,13 @@ def test_read_cue_falls_back_to_windows_1252(tmp_path: Path) -> None:
     cue.write_bytes(b'TITLE "Mot\xf6rhead"\n')
 
     assert read_cue(cue) == 'TITLE "Motörhead"\n'
+
+
+def test_read_cue_replaces_bytes_that_no_encoding_defines(tmp_path: Path) -> None:
+    cue = tmp_path / "a.cue"
+    cue.write_bytes(b'TITLE "A\x81B"\n')
+
+    assert read_cue(cue) == 'TITLE "A�B"\n'
 
 
 def touch(root: Path, *names: str) -> Path:
@@ -142,7 +149,7 @@ def test_split_puts_tracks_in_the_inbox_and_the_source_in_holding(
 
     album = tmp_path / "inbox" / "Gatecreeper-2019-Deserted"
     assert result.tracks == [album / f"split-track0{n}.flac" for n in (1, 2, 3)]
-    assert result.track_count == 3
+    assert len(result.tracks) == 3
     held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
     assert result.holding == held
     assert sorted(p.name for p in held.iterdir()) == [
@@ -240,7 +247,7 @@ def test_a_source_on_another_share_is_refused_before_anything_is_made(
     rip = make_rip(tmp_path)
     tools = Tools()
     holding = tmp_path / "holding"
-    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == holding else 1)
+    on_another_device(monkeypatch, holding)
 
     with pytest.raises(SplitError, match="one share"):
         split_rip(rip, tmp_path / "inbox", tmp_path / "holding", tools)
@@ -255,12 +262,14 @@ def test_an_inbox_on_another_share_is_refused_too(
 ) -> None:
     rip = make_rip(tmp_path)
     inbox = tmp_path / "inbox"
-    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == inbox else 1)
+    on_another_device(monkeypatch, inbox)
 
     with pytest.raises(SplitError, match="one share"):
         split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
 
-    assert not (tmp_path / "inbox").exists()
+    assert list(inbox.iterdir()) == []
+    assert not (tmp_path / "holding").exists()
+    assert rip.flac.read_bytes() == b"big"
 
 
 def test_device_of_a_folder_that_does_not_exist_yet_is_its_nearest_parent(

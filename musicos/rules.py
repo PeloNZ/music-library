@@ -1,10 +1,4 @@
-"""What to do with the copies in a group of duplicate albums.
-
-The ruleset, highest priority first:
-
-1. FLAC tracks already split.
-2. A single FLAC with a cue file.
-3. Lossy tracks.
+"""What to do with the copies in a group of duplicate albums, by `PRIORITY`.
 
 A copy is a deletion candidate only when a strictly higher priority copy
 exists. This only decides and records: it never deletes.
@@ -43,14 +37,13 @@ class Decision:
 
 
 def decide(group: list[Release]) -> list[Decision]:
-    """One decision per copy, in the order of the group.
+    """One decision per copy, in the order of the group. The actions:
 
     - keep: the single highest priority copy.
     - tie: several copies share the top priority, so the user chooses.
-    - candidate: a strictly lower priority than a copy that has at least as
-      many tracks. Marked for the user to delete by hand.
-    - review: a lower priority copy with more tracks than the best copy, or any
-      group that holds a format that is not in the ranking. Nothing is marked.
+    - candidate: lower priority than the best copy, which has at least as many
+      tracks.
+    - review: more tracks than the best copy, or a format outside the ranking.
     """
     ranks = [rank(r) for r in group]
     if None in ranks:
@@ -58,7 +51,7 @@ def decide(group: list[Release]) -> list[Decision]:
             Decision(
                 r,
                 "review",
-                f"{r.fmt} is not in the ranking"
+                f"{r.fmt or 'no readable file'} is not in the ranking"
                 if rank(r) is None
                 else "the group holds a format that is not in the ranking",
             )

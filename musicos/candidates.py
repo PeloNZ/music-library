@@ -4,8 +4,8 @@
 copy makes redundant. Nothing here deletes anything. Each entry's status is
 worked out from the disk when the log is read:
 
-- open: the folder exists and every copy that outranked it still exists.
-- stale: the folder exists but a copy that outranked it is gone. It is no
+- open: the folder exists and at least one copy that outranked it exists.
+- stale: the folder exists but every copy that outranked it is gone. It is no
   longer safe to delete.
 - done: the folder is gone.
 """
@@ -54,7 +54,7 @@ def record_candidates(
 def status_of(entry: Entry) -> str:
     if not Path(entry["folder"]).exists():
         return "done"
-    if any(not Path(p).exists() for p in entry["kept_by"]):
+    if all(not Path(p).exists() for p in entry["kept_by"]):
         return "stale"
     return "open"
 

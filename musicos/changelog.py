@@ -65,3 +65,7 @@ def format_entry(entry: Entry) -> str:
             continue
         parts.append(f"{key}={len(value) if isinstance(value, list) else value}")
     return " ".join(parts)
+
+
+def stamp(when: datetime) -> str:
+    return when.strftime("%Y-%m-%d %H:%M:%S")

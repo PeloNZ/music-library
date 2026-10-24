@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MusicOS is an agent-driven layer for organizing a real, physical music collection using [beets](https://beets.io/) as the underlying library engine. Beets is a runtime dependency only — installed from PyPI (`pipx install beets` or equivalent, see `docs/SETUP.md`), never vendored or forked into this repo. Every skill and script here shells out to the `beet` CLI; nothing in this repo `import`s beets as a Python library. There is no wiki, knowledge base, or markdown synthesis layer here — the thing being maintained is the actual collection: audio files on disk plus beets' SQLite-backed tag database. See `docs/ROADMAP.md` for what's intentionally not built yet.
 
-Agent work happens through seven Claude Code skills under `.claude/skills/`, each a thin orchestration layer over the stock `beet` CLI — no custom beets plugin code is part of this project:
+Agent work happens through eight Claude Code skills under `.claude/skills/`, each a thin orchestration layer over the stock `beet` CLI — no custom beets plugin code is part of this project:
 
 | Skill | Does |
 |---|---|
@@ -17,13 +17,14 @@ Agent work happens through seven Claude Code skills under `.claude/skills/`, eac
 | `music-playlist` | Generate/regenerate `.m3u` playlists from saved queries (`smartplaylist`) |
 | `music-query` | Answer questions by running live `beet` queries/exports — no caching, no synthesis |
 | `music-lint` | Health-check the library: placement drift, duplicates, incomplete albums, unmatched imports |
+| `music-dupes` | Find the same album in more than one folder, apply the keep-and-delete-candidate ruleset, list deletion candidates. Never deletes |
 
 ## Directory map
 
 ```
 MusicOS/
 ├── .claude-plugin/  # plugin.json + marketplace.json — makes this repo an installable Claude Code plugin
-├── .claude/skills/  # the seven skills above (also auto-loads as project skills for anyone who clones this repo)
+├── .claude/skills/  # the eight skills above (also auto-loads as project skills for anyone who clones this repo)
 ├── beetsdir/        # BEETSDIR: config.yaml, library.db, logs/, exports/ (created by music-setup)
 ├── docs/            # SETUP.md, LIBRARY-LAYOUT.md, BEETS-CHEATSHEET.md, ROADMAP.md
 └── scripts/         # library_snapshot.py — thin `beet export` wrapper used by music-query/music-lint

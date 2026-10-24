@@ -10,7 +10,7 @@ from musicos.cli import main
 from musicos.dupes import Tags
 from musicos.plex import Response
 from musicos.runner import Output, Run
-from tests.fakes import FakeHttp, Tools
+from tests.fakes import FakeHttp, Tools, on_another_device
 from tests.test_appledouble import shadow
 from tests.test_split import CUE
 
@@ -1459,7 +1459,7 @@ def test_split_dry_run_already_refuses_folders_on_different_shares(
     beets.mkdir()
     make_rips(tmp_path / "src", "Deserted")
     holding = (tmp_path / "holding").resolve()
-    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == holding else 1)
+    on_another_device(monkeypatch, holding)
 
     code = main(
         split_args(tmp_path),
@@ -1495,7 +1495,7 @@ def isis_library(root: Path) -> Path:
 
 def isis_tags(path: Path) -> Tags | None:
     album = "Oceanic" if path.parent.name == "Oceanic" else "Celestial"
-    return Tags(album, "Isis", "2000", "1", 600.0, "FLAC 16/44.1")
+    return Tags(album, "Isis", "1", 600.0, "FLAC 16/44.1")
 
 
 def test_dupes_prints_the_report_and_writes_the_file_and_one_log_line(

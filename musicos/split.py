@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from musicos.runner import Output, Run
+from musicos.runner import Output, Run, first_error
 
 AUDIO_TRACK = re.compile(r"^\s*TRACK\s+\d+\s+AUDIO\b", re.IGNORECASE | re.MULTILINE)
 
@@ -20,7 +20,7 @@ def read_cue(path: Path) -> str:
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return data.decode("cp1252")
+        return data.decode("cp1252", errors="replace")
 
 
 def cue_track_count(text: str) -> int:
@@ -40,11 +40,11 @@ class Scan:
     ambiguous: list[Path] = field(default_factory=list)
 
 
-def _files(folder: Path, suffix: str) -> list[Path]:
+def files_with_suffix(folder: Path, *suffixes: str) -> list[Path]:
     return sorted(
         p
         for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() == suffix and not p.name.startswith("._")
+        if p.is_file() and p.suffix.lower() in suffixes and not p.name.startswith("._")
     )
 
 
@@ -56,7 +56,10 @@ def scan(root: Path) -> Scan:
     rips: list[Rip] = []
     ambiguous: list[Path] = []
     for folder in sorted({p.parent for p in root.rglob("*") if p.is_file()}):
-        flacs, cues = _files(folder, ".flac"), _files(folder, ".cue")
+        flacs, cues = (
+            files_with_suffix(folder, ".flac"),
+            files_with_suffix(folder, ".cue"),
+        )
         if len(flacs) != 1 or not cues:
             continue
         if len(cues) == 1:
@@ -91,14 +94,12 @@ def check_one_share(*paths: Path) -> None:
 @dataclass(frozen=True)
 class SplitResult:
     tracks: list[Path]
-    track_count: int
     holding: Path
 
 
 def _check(out: Output, tool: str) -> Output:
     if out.code != 0:
-        message = out.stderr.strip().splitlines()[:1] or [f"{tool} failed"]
-        raise SplitError(message[0])
+        raise SplitError(first_error(out, f"{tool} failed"))
     return out
 
 
@@ -150,4 +151,4 @@ def split_rip(rip: Rip, inbox: Path, holding: Path, run: Run) -> SplitResult:
         raise SplitError(
             f"the tracks are in {album} but the source was not moved: {exc}"
         ) from exc
-    return SplitResult(sorted(album.glob("*.flac")), count, held)
+    return SplitResult(sorted(album.glob("*.flac")), held)

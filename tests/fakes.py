@@ -1,7 +1,11 @@
 """Fake external tools shared by tests."""
 
+import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from musicos.plex import Response
 from musicos.runner import Output
@@ -54,3 +58,20 @@ class FakeHttp:
 
     def paths(self) -> list[str]:
         return [url.split(":32400", 1)[-1] for url, _ in self.requests]
+
+
+def on_another_device(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
+    """Make `os.stat` report a different device id for one existing folder."""
+    folder.mkdir(parents=True, exist_ok=True)
+    real_stat = os.stat
+    target = str(folder)
+
+    def fake_stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        st = real_stat(path, *args, **kwargs)
+        if str(path) != target:
+            return st
+        fields = list(st)
+        fields[2] = st.st_dev + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "stat", fake_stat)

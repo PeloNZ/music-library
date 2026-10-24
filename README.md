@@ -51,7 +51,7 @@ Edit `beetsdir/config.yaml`:
 
 - `directory: /Volumes/media/jbod2/media/music`
 
-Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/media`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/music`.
+Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/media`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/media`.
 
 The `plex` commands read `PLEX_URL` and `PLEX_TOKEN`. Plex here has two music-type libraries (`Music` and `Audiobook`), so also set `PLEX_SECTION=Music` or pass `--section`. `folders` and the post-import rescan need a path map from each Mac mount to its server path: `PLEX_PATH_MAP=/Volumes/media=/data`. Put them in an env file at the repo root, one `KEY=value` per line (`#` comments and an `export ` prefix are allowed). The file is gitignored. `musicos` loads it on every run, and a variable already set in the shell wins. A bad line stops the run and names only its line number. Never commit the token.
 
@@ -84,7 +84,7 @@ All in `beetsdir/logs/` (gitignored).
 
 `uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.
 
-Today `changes.jsonl` records imports: batch, source folder (only for `ingest --unattended`), album and flagged counts, and the path of every imported item. Each command added later that changes files must append its own entries: old and new paths for a move, old and new values for a tag write, source and tracks for a split.
+`changes.jsonl` holds one entry for each change a command makes: `split`, `ingest`, `folders --apply`, `clean-appledouble --apply` and `plex refresh`. An import entry holds the batch, the source folder (only for `ingest --unattended`), the album and flagged counts, and the path of every imported item. A split entry holds the source and the track count. Each command added later that changes files must append its own entries.
 
 ## Duplicate albums
 
@@ -103,7 +103,7 @@ Priority, highest first:
 | A lower priority copy has more tracks than the best copy | **review**: not marked, deleting it could lose tracks |
 | The group holds a format outside the ranking (WAV, ALAC, APE) | **review**: nothing is marked |
 
-Each log entry has a status read from the disk: `open`, `stale` (the copy that outranked it is gone, so it is no longer safe to delete) or `done` (the folder is gone, hidden unless `candidates --all`).
+Each log entry has a status read from the disk: `open`, `stale` (every copy that outranked it is gone, so it is no longer safe to delete) or `done` (the folder is gone, hidden unless `candidates --all`).
 
 ## Rules
 

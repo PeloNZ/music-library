@@ -31,7 +31,7 @@ def result(results: list[CheckResult], name: str) -> CheckResult:
 def test_clean_library_has_no_findings() -> None:
     results = run_lint(runner())
 
-    assert len(results) == len(CHECKS) + 1  # plus path case mismatches
+    assert len(results) == 7
     assert [r.count for r in results] == [0] * len(results)
     assert all(r.error is None for r in results)
 

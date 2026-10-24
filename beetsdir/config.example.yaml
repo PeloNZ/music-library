@@ -52,11 +52,7 @@ ignore:
   - Thumbs.db
   - sync.ffs_db
 
-# Enabling chroma gives beets a second metadata source, and beets then adds a
-# fixed "data source" penalty (about 0.03 to 0.12 per album) to every
-# MusicBrainz candidate. That alone pushes a perfect match past
-# match.strong_rec_thresh (0.04), so an unattended import skips everything.
-# Zero removes the offset. The thresholds stay at their defaults.
+# Zero stops chroma's second metadata source from failing every unattended match.
 musicbrainz:
   data_source_mismatch_penalty: 0
 

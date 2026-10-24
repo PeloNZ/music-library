@@ -165,3 +165,13 @@ def test_parse_import_log_returns_each_skipped_path_with_its_kind() -> None:
 
 def test_parse_import_log_ignores_the_header_and_blank_lines() -> None:
     assert parse_import_log("import started Sat Oct 24 22:04:41 2026\n\n") == []
+
+
+def test_batch_id_of_a_folder_named_in_another_script_has_a_slug() -> None:
+    assert make_batch_id(WHEN, Path("/inbox/日本語")) == "20261024-2140-import"
+
+
+def test_has_audio_ignores_macos_shadow_files(tmp_path: Path) -> None:
+    (tmp_path / "._01.flac").write_bytes(b"\x00\x05\x16\x07")
+
+    assert not has_audio(tmp_path)

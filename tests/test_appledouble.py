@@ -60,3 +60,23 @@ def test_a_shadow_without_its_data_file_is_still_found(tmp_path: Path) -> None:
     orphan = shadow(tmp_path / "._gone.flac")
 
     assert find_appledouble(tmp_path) == [orphan]
+
+
+def test_an_unreadable_file_does_not_stop_the_scan(tmp_path: Path) -> None:
+    locked = tmp_path / "._locked.flac"
+    locked.write_bytes(HEADER)
+    locked.chmod(0)
+    b = shadow(tmp_path / "._cover.jpg")
+    try:
+        assert find_appledouble(tmp_path) == [b]
+    finally:
+        locked.chmod(0o644)
+
+
+def test_a_fifo_named_like_a_shadow_file_is_skipped_without_blocking(
+    tmp_path: Path,
+) -> None:
+    os.mkfifo(tmp_path / "._pipe")
+    real = shadow(tmp_path / "._a.flac")
+
+    assert find_appledouble(tmp_path) == [real]

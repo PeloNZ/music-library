@@ -8,6 +8,7 @@ library folders before it is made.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -17,6 +18,11 @@ class FolderError(Exception):
 
 
 PathMap = list[tuple[Path, PurePosixPath]]
+
+
+def env_path_map(env: Mapping[str, str]) -> list[str]:
+    """The MAC=SERVER entries in PLEX_PATH_MAP, which are comma separated."""
+    return [m for m in env.get("PLEX_PATH_MAP", "").split(",") if m]
 
 
 def parse_path_map(items: list[str]) -> PathMap:
@@ -33,7 +39,7 @@ def parse_path_map(items: list[str]) -> PathMap:
 def to_server_path(path: Path, maps: PathMap) -> PurePosixPath | None:
     """The server path of a Mac path, by the longest matching share prefix."""
     for mac, server in sorted(maps, key=lambda m: len(m[0].parts), reverse=True):
-        if path == mac or mac in path.parents:
+        if path.is_relative_to(mac):
             return server / PurePosixPath(*path.relative_to(mac).parts)
     return None
 
@@ -45,7 +51,7 @@ def check_outside_plex(
     for library in libraries:
         if server_path == library:
             raise FolderError(f"{server_path} is a Plex library folder")
-        if library in server_path.parents:
+        if server_path.is_relative_to(library):
             raise FolderError(
                 f"{server_path} is inside the Plex library folder {library}"
             )
@@ -73,7 +79,10 @@ def create_plex_free_folder(path: Path) -> FolderResult:
     made = not path.exists()
     path.mkdir(exist_ok=True)
     ignore = path / ".plexignore"
-    written = not ignore.exists()
-    if written:
-        ignore.write_text(PLEXIGNORE)
+    try:
+        with ignore.open("x") as f:  # "x" refuses an existing path, a symlink included
+            f.write(PLEXIGNORE)
+        written = True
+    except FileExistsError:
+        written = False
     return FolderResult(path, made, written)

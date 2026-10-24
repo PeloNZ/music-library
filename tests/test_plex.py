@@ -1,4 +1,6 @@
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import PurePosixPath
+from threading import Thread
 
 import pytest
 
@@ -8,6 +10,7 @@ from musicos.plex import (
     Response,
     Section,
     choose_section,
+    http_get,
     music_sections,
     parse_sections,
     section_for_path,
@@ -142,3 +145,49 @@ def test_section_for_path_needs_a_whole_folder_name_match() -> None:
 
 def test_section_for_path_is_none_when_no_library_holds_the_folder() -> None:
     assert section_for_path(PurePosixPath("/elsewhere"), [MUSIC, LIVE]) is None
+
+
+def test_a_reply_that_is_not_the_sections_json_is_a_plex_error() -> None:
+    with pytest.raises(PlexError):
+        parse_sections("<html>Bad gateway</html>")
+    with pytest.raises(PlexError):
+        parse_sections('{"unexpected": 1}')
+
+
+def test_http_get_does_not_send_the_token_to_a_redirect_target() -> None:
+    seen: list[str | None] = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append(self.headers.get("X-Plex-Token"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    target = HTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_port}/")
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    redirector = HTTPServer(("127.0.0.1", 0), Redirector)
+    for server in (target, redirector):
+        Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        response = http_get(
+            f"http://127.0.0.1:{redirector.server_port}/", {"X-Plex-Token": "t0k3n"}
+        )
+    finally:
+        for server in (target, redirector):
+            server.shutdown()
+            server.server_close()
+
+    assert response.status == 302
+    assert seen == []

@@ -11,12 +11,13 @@ from musicos.dupes import (
     Release,
     Tags,
     audio_folders,
+    cue_header,
     describe,
     find_duplicates,
     normalize,
     read_tags,
 )
-from musicos.rules import Decision, decide
+from musicos.rules import Decision, decide, rank
 
 CUE = """\
 REM GENRE "Post-Metal"
@@ -51,7 +52,6 @@ def flac(album: str, length: float = 300.0, artist: str = "Isis", **kw: object) 
     base = {
         "album": album,
         "artist": artist,
-        "year": "2002",
         "disc": "1",
         "length": length,
         "fmt": "FLAC 16/44.1",
@@ -94,7 +94,6 @@ def test_describe_summarises_a_folder_of_tracks(tmp_path: Path) -> None:
         folder=folder,
         artist="Isis",
         album="Oceanic",
-        year="2002",
         disc="1",
         tracks=3,
         seconds=600.0,
@@ -136,15 +135,11 @@ def test_a_cue_rip_takes_its_track_count_and_names_from_the_cue(
     folder = tmp_path / "Isis - Celestial (2000) [EAC-FLAC]"
     touch(folder, "Isis - Celestial.flac", data=b"big")
     (folder / "Isis - Celestial.cue").write_text(CUE)
-    read = tags_by_name({"Isis - Celestial.flac": flac("", 3000.0, artist="", year="")})
+    read = tags_by_name({"Isis - Celestial.flac": flac("", 3000.0, artist="")})
 
     release = describe(folder, read)
 
-    assert (release.artist, release.album, release.year) == (
-        "Isis",
-        "Celestial",
-        "2000",
-    )
+    assert (release.artist, release.album) == ("Isis", "Celestial")
     assert release.tracks == 2  # from the cue, not the single FLAC file
     assert release.seconds == 3000.0
     assert release.cue
@@ -172,7 +167,6 @@ def rel(
         "folder": Path(folder),
         "artist": artist,
         "album": album,
-        "year": "2000",
         "disc": disc,
         "tracks": tracks,
         "seconds": 3000.0,
@@ -364,12 +358,7 @@ def test_read_tags_reads_a_real_flac(tmp_path: Path) -> None:
     tags = read_tags(flac_file)
 
     assert tags is not None
-    assert (tags.album, tags.artist, tags.year, tags.disc) == (
-        "Oceanic",
-        "Isis",
-        "2002",
-        "1",
-    )
+    assert (tags.album, tags.artist, tags.disc) == ("Oceanic", "Isis", "1")
     assert tags.fmt == "FLAC 16/44.1"
     assert 0.9 < tags.length < 1.1
 
@@ -401,7 +390,7 @@ def test_read_tags_of_an_untagged_file_has_empty_names(tmp_path: Path) -> None:
     tags = read_tags(flac_file)
 
     assert tags is not None
-    assert (tags.album, tags.artist, tags.year) == ("", "", "")
+    assert (tags.album, tags.artist) == ("", "")
     assert tags.disc == "1"
 
 
@@ -441,6 +430,7 @@ def test_a_disc_number_of_zero_means_not_set_and_reads_as_disc_one(
         ("alac.m4a", ["-c:a", "alac"], "lossless"),
         ("t.wav", [], "lossless"),
         ("t.aiff", [], "lossless"),
+        ("t.tta", ["-c:a", "tta"], "lossless"),
     ],
 )
 def test_read_tags_tells_flac_other_lossless_and_lossy_apart(
@@ -479,3 +469,47 @@ def test_a_release_takes_the_most_common_kind_of_its_files(tmp_path: Path) -> No
     )
 
     assert describe(folder, read).kind == "lossy"
+
+
+def test_a_macos_shadow_of_the_cue_sheet_is_not_the_cue_sheet(tmp_path: Path) -> None:
+    folder = tmp_path / "Isis - Celestial (2000) [EAC-FLAC]"
+    touch(folder, "Isis - Celestial.flac", data=b"big")
+    (folder / "Isis - Celestial.cue").write_text(CUE)
+    touch(folder, "._Isis - Celestial.cue", data=b"\x00\x05\x16\x07\x81")
+    read = tags_by_name({"Isis - Celestial.flac": flac("", 3000.0, artist="")})
+
+    release = describe(folder, read)
+
+    assert (release.tracks, release.album) == (2, "Celestial")
+
+
+def test_a_folder_with_no_readable_file_is_not_ranked_as_lossy(tmp_path: Path) -> None:
+    folder = tmp_path / "x"
+    touch(folder, "1.flac")
+
+    release = describe(folder, lambda path: None)
+
+    assert rank(release) is None
+    reason = decide([release, rel("/other", kind="lossy", cue=False)])[0].reason
+    assert reason == "no readable file is not in the ranking"
+
+
+def test_cue_header_replaces_control_characters_in_names() -> None:
+    text = 'PERFORMER "Isis\x1b[31m"\nTITLE "Cele\x07stial"\nTRACK 01 AUDIO\n'
+
+    assert cue_header(text) == {"artist": "Isis?[31m", "album": "Cele?stial"}
+
+
+@needs_ffmpeg
+def test_read_tags_replaces_control_characters_in_names(tmp_path: Path) -> None:
+    flac_file = tmp_path / "01.flac"
+    make_audio(
+        flac_file,
+        "-metadata", "album=Oce\x1b[2Janic",
+        "-metadata", "artist=Isis",
+    )  # fmt: skip
+
+    tags = read_tags(flac_file)
+
+    assert tags is not None
+    assert tags.album == "Oce?[2Janic"
