@@ -16,6 +16,13 @@ def test_folder_inside_mount_passes() -> None:
     assert check_mount("/Volumes/music/Cake", MOUNTS).ok
 
 
+def test_local_folder_needs_no_mount() -> None:
+    result = check_mount("/Users/me/code/music-library/music-test", MOUNTS)
+
+    assert result.ok
+    assert "local" in result.detail
+
+
 def test_share_not_mounted_fails() -> None:
     root_only = MOUNTS.splitlines()[0] + "\n"
 

@@ -29,10 +29,13 @@ def check_beetsdir(env: Mapping[str, str]) -> Result:
 
 
 def check_mount(directory: str, mount_output: str) -> Result:
-    """The library folder must sit on a mounted volume, not on the root disk.
+    """A library folder under /Volumes must sit on a mounted volume.
 
     A dropped network mount leaves an empty local folder at the same path.
+    Folders elsewhere are on the local disk and need no mount.
     """
+    if not directory.startswith("/Volumes/"):
+        return Result("mount", True, "local folder")
     for mount_point in re.findall(r" on (.+) \(", mount_output):
         if mount_point != "/" and (
             directory == mount_point or directory.startswith(mount_point + "/")
