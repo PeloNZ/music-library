@@ -1711,3 +1711,53 @@ def test_candidates_needs_beetsdir(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert code == 1
     assert "FAIL beetsdir" in capsys.readouterr().out
+
+
+def test_dupes_refuses_a_root_on_a_share_that_is_not_mounted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["dupes", "/Volumes/gone/Isis"],
+        env=make_beetsdir(beets),
+        run=lambda cmd: Output(MOUNTS, "", 0),
+        tag_reader=isis_tags,
+    )
+
+    assert code == 1
+    assert "FAIL mount: nothing is mounted at /Volumes/gone/Isis" in (
+        capsys.readouterr().out
+    )
+
+
+def test_candidates_on_an_unmounted_share_are_unknown_not_done(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    record(
+        beets / "logs" / "deletion-candidates.jsonl",
+        "candidate",
+        NOW,
+        root="/Volumes/gone/Isis",
+        album="Isis - Celestial",
+        folder="/Volumes/gone/Isis/Celestial [MP3]",
+        rule="lossy tracks is lower priority than FLAC tracks already split",
+        kept_by=["/Volumes/gone/Isis/(2000) Celestial"],
+        tracks=11,
+        fmt="MP3 320k",
+        size=1048576,
+    )
+
+    code = main(
+        ["candidates"],
+        env=make_beetsdir(beets),
+        run=lambda cmd: Output(MOUNTS, "", 0),
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "unknown" in out and "share is not mounted" in out
+    assert "1 unknown" in out

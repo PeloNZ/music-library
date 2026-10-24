@@ -8,10 +8,12 @@ worked out from the disk when the log is read:
 - stale: the folder exists but every copy that outranked it is gone. It is no
   longer safe to delete.
 - done: the folder is gone.
+- unknown: the share the folder is on is not mounted, so the disk says nothing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -51,7 +53,12 @@ def record_candidates(
     return len(new)
 
 
-def status_of(entry: Entry) -> str:
+Mounted = Callable[[str], bool]
+
+
+def status_of(entry: Entry, mounted: Mounted = lambda root: True) -> str:
+    if not mounted(entry["root"]):
+        return "unknown"
     if not Path(entry["folder"]).exists():
         return "done"
     if all(not Path(p).exists() for p in entry["kept_by"]):
@@ -59,7 +66,9 @@ def status_of(entry: Entry) -> str:
     return "open"
 
 
-def list_candidates(path: Path, include_done: bool = False) -> list[tuple[Entry, str]]:
+def list_candidates(
+    path: Path, include_done: bool = False, mounted: Mounted = lambda root: True
+) -> list[tuple[Entry, str]]:
     """Every entry with its status, in log order. Done ones only on request."""
-    entries = [(e, status_of(e)) for e in read_entries(path)]
+    entries = [(e, status_of(e, mounted)) for e in read_entries(path)]
     return [(e, s) for e, s in entries if include_done or s != "done"]

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from musicos.runner import Run
+
 
 @dataclass(frozen=True)
 class Result:
@@ -29,13 +31,16 @@ def check_beetsdir(env: Mapping[str, str]) -> Result:
     return Result("beetsdir", True, beetsdir)
 
 
+SHARES = "/Volumes/"
+
+
 def check_mount(directory: str, mount_output: str) -> Result:
     """A library folder under /Volumes must sit on a mounted volume.
 
     A dropped network mount leaves an empty local folder at the same path.
     Folders elsewhere are on the local disk and need no mount.
     """
-    if not directory.startswith("/Volumes/"):
+    if not directory.startswith(SHARES):
         return Result("mount", True, "local folder")
     for mount_point in re.findall(r" on (.+) \(", mount_output):
         if mount_point != "/" and (
@@ -71,3 +76,9 @@ def check_tools(names: list[str], which: Callable[[str], str | None]) -> Result:
     if missing:
         return Result("tools", False, f"{', '.join(missing)} not found")
     return Result("tools", True, ", ".join(names))
+
+
+def check_share(directory: str, run: Run) -> Result:
+    """check_mount for one path. `mount` runs only for a path under /Volumes."""
+    output = run(["mount"]).stdout if directory.startswith(SHARES) else ""
+    return check_mount(directory, output)

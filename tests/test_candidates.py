@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from musicos.candidates import list_candidates, record_candidates, status_of
-from musicos.changelog import read_entries
+from musicos.changelog import read_entries, record
 from musicos.rules import decide
 from tests.test_dupes import rel
 
@@ -144,3 +144,21 @@ def test_list_candidates_hides_done_ones_unless_asked(tmp_path: Path) -> None:
 
 def test_list_candidates_of_a_missing_log_is_empty(tmp_path: Path) -> None:
     assert list_candidates(tmp_path / "none.jsonl") == []
+
+
+def test_a_candidate_on_an_unmounted_share_is_unknown_and_always_listed(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "logs" / "deletion-candidates.jsonl"
+    record(
+        log,
+        "candidate",
+        WHEN,
+        root="/Volumes/gone/Isis",
+        folder="/Volumes/gone/Isis/Celestial [MP3]",
+        kept_by=["/Volumes/gone/Isis/(2000) Celestial"],
+    )
+
+    listed = list_candidates(log, mounted=lambda root: False)
+
+    assert [s for _, s in listed] == ["unknown"]

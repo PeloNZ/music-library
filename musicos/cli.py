@@ -10,6 +10,7 @@ import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -68,6 +69,7 @@ from musicos.preflight import (
     check_beetsdir,
     check_mount,
     check_plugins,
+    check_share,
     check_tools,
     configured_plugins,
 )
@@ -491,9 +493,17 @@ def clean_appledouble(
 
 
 def dupes(
-    env: Mapping[str, str], args: argparse.Namespace, when: datetime, read: TagReader
+    env: Mapping[str, str],
+    args: argparse.Namespace,
+    when: datetime,
+    read: TagReader,
+    run: Run,
 ) -> int:
     root: Path = args.root.resolve()
+    share = check_share(str(root), run)
+    if not share.ok:
+        print_results([share])
+        return 1
     if not root.is_dir():
         print(f"FAIL root: {root} is not a folder")
         return 1
@@ -516,11 +526,14 @@ def dupes(
     return 0
 
 
-def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
+def candidates_command(
+    env: Mapping[str, str], args: argparse.Namespace, run: Run
+) -> int:
     if not beetsdir_ok(env):
         return 1
     log = logs_dir(env) / "deletion-candidates.jsonl"
-    everything = list_candidates(log, include_done=True)
+    mounted = cache(lambda root: check_share(root, run).ok)
+    everything = list_candidates(log, include_done=True, mounted=mounted)
     if not everything:
         print("no deletion candidates recorded")
         return 0
@@ -528,7 +541,7 @@ def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
     if not listed:
         print("no open deletion candidates")
         return 0
-    counts = {"open": 0, "stale": 0, "done": 0}
+    counts = {"open": 0, "stale": 0, "done": 0, "unknown": 0}
     open_bytes = 0
     for entry, status in listed:
         counts[status] += 1
@@ -541,7 +554,11 @@ def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
         print(f"       kept: {'; '.join(entry['kept_by'])}")
         if status == "stale":
             print("       do not delete: every copy that outranked it is missing")
+        if status == "unknown":
+            print("       the share is not mounted: mount it and run this again")
     summary = f"{counts['open']} open ({open_bytes / 1048576:.0f} MiB), {counts['stale']} stale"
+    if counts["unknown"]:
+        summary += f", {counts['unknown']} unknown"
     if args.all:
         summary += f", {counts['done']} done"
     print(summary)
@@ -663,9 +680,9 @@ def main(
     if args.command == "clean-appledouble":
         return clean_appledouble(env, args, now())
     if args.command == "dupes":
-        return dupes(env, args, now(), tag_reader)
+        return dupes(env, args, now(), tag_reader, run)
     if args.command == "candidates":
-        return candidates_command(env, args)
+        return candidates_command(env, args, run)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":
