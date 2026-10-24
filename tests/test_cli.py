@@ -1798,3 +1798,193 @@ def test_candidates_on_an_unmounted_share_are_unknown_not_done(
     assert code == 0
     assert "unknown" in out and "share is not mounted" in out
     assert "1 unknown" in out
+
+
+class BatchRun(Recorder):
+    """Recorder that also says which album folders beets already holds."""
+
+    def __init__(self, held: str = "", **kw: int) -> None:
+        super().__init__(**kw)
+        self.held = held
+
+    def __call__(self, cmd: list[str]) -> Output:
+        if cmd[:3] == ["beet", "ls", "-a"]:
+            self.commands.append(cmd)
+            return Output(self.held, "", 0)
+        return super().__call__(cmd)
+
+    def imports(self) -> list[list[str]]:
+        return [c for c in self.commands if c[:2] == ["beet", "import"]]
+
+
+def batch(
+    tmp_path: Path, run: Run, *extra: str, root: Path | None = None
+) -> tuple[int, Path]:
+    root = root or isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir(exist_ok=True)
+    code = main(
+        ["batch", str(root), "--no-plex-refresh", *extra],
+        env=make_beetsdir(beets),
+        run=run,
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+    return code, beets
+
+
+def test_batch_dry_run_previews_the_kept_folders_and_imports_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = BatchRun()
+
+    code, _ = batch(tmp_path, run)
+
+    out = capsys.readouterr().out
+    root = (tmp_path / "Isis").resolve()
+    assert code == 0
+    assert f"{root}/Discography/(2000) Celestial" in out
+    assert f"{root}/Oceanic" in out
+    assert "dry run: nothing imported. Add --apply to import." in out
+    assert run.imports() == [
+        [
+            "beet",
+            "import",
+            "--pretend",
+            f"{root}/Discography/(2000) Celestial",
+            f"{root}/Oceanic",
+        ]
+    ]
+
+
+def test_batch_apply_makes_one_unattended_import_of_the_kept_folders(
+    tmp_path: Path,
+) -> None:
+    run = BatchRun()
+
+    code, beets = batch(tmp_path, run, "--apply")
+
+    root = (tmp_path / "Isis").resolve()
+    real = [c for c in run.imports() if "--pretend" not in c]
+    assert code == 0
+    assert len(real) == 1
+    cmd = real[0]
+    assert cmd[cmd.index("-q") : cmd.index("-q") + 3] == [
+        "-q",
+        "--quiet-fallback",
+        "skip",
+    ]
+    assert cmd[-2:] == [f"{root}/Discography/(2000) Celestial", f"{root}/Oceanic"]
+    assert "musicos_batch=20261024-2130-isis" in cmd
+    assert cmd[cmd.index("-l") + 1] == f"{beets}/logs/import-20261024-2130-isis.log"
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["action"] == "import" and entry["batch"] == "20261024-2130-isis"
+
+
+def test_batch_leaves_out_the_deletion_candidate_and_never_touches_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = BatchRun()
+    root = isis_library(tmp_path / "Isis")
+    rip = root / "Isis - Celestial (2000) [EAC-FLAC]"
+
+    batch(tmp_path, run, "--apply", root=root)
+
+    out = capsys.readouterr().out
+    assert "deletion candidate" in out and rip.name in out
+    assert not any(str(rip.resolve()) in c for c in run.imports())
+    assert (rip / "rip.flac").exists()
+    entries = read_entries(tmp_path / "beets" / "logs" / "deletion-candidates.jsonl")
+    assert [e["folder"] for e in entries] == [str(rip.resolve())]
+
+
+def test_batch_skips_a_folder_beets_already_holds(tmp_path: Path) -> None:
+    root = isis_library(tmp_path / "Isis")
+    held = f"{(root / 'Oceanic').resolve()}\n"
+    run = BatchRun(held=held)
+
+    batch(tmp_path, run, root=root)
+
+    (pretend,) = run.imports()
+    assert pretend[-1] == f"{root.resolve()}/Discography/(2000) Celestial"
+    assert str((root / "Oceanic").resolve()) not in pretend
+
+
+def test_batch_imports_nothing_from_a_group_where_the_user_must_choose(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Isis"
+    for name in ("A", "B"):
+        folder = root / name
+        folder.mkdir(parents=True)
+        (folder / "01.flac").write_bytes(b"x")
+    run = BatchRun()
+
+    code, _ = batch(tmp_path, run, "--apply", root=root)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert run.imports() == []
+    assert "choose one" in out and f"{root.resolve()}/A" in out
+
+
+def test_batch_lists_a_kept_cue_rip_for_splitting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Isis"
+    rip = root / "Isis - Celestial (2000) [EAC-FLAC]"
+    rip.mkdir(parents=True)
+    (rip / "rip.flac").write_bytes(b"x")
+    (rip / "rip.cue").write_text('PERFORMER "Isis"\n  TRACK 01 AUDIO\n')
+    run = BatchRun()
+
+    batch(tmp_path, run, "--apply", root=root)
+
+    out = capsys.readouterr().out
+    assert run.imports() == []
+    assert f"split first (musicos split): {rip.resolve()}" in out
+
+
+def test_batch_reports_a_failed_import(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _ = batch(tmp_path, BatchRun(import_code=1), "--apply")
+
+    assert code == 1
+    assert "FAIL import: import failed" in capsys.readouterr().out
+
+
+def test_batch_refuses_a_root_on_a_share_that_is_not_mounted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["batch", "/Volumes/gone/Isis"],
+        env=make_beetsdir(beets),
+        run=BatchRun(),
+        tag_reader=isis_tags,
+    )
+
+    assert code == 1
+    assert "FAIL mount: nothing is mounted at /Volumes/gone/Isis" in (
+        capsys.readouterr().out
+    )
+
+
+def test_batch_stops_when_the_root_is_not_a_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["batch", str(tmp_path / "missing")],
+        env=make_beetsdir(beets),
+        run=BatchRun(),
+        tag_reader=isis_tags,
+    )
+
+    assert code == 1
+    assert "FAIL root: " in capsys.readouterr().out

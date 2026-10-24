@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
+from musicos.batch import plan_batch
 from musicos.candidates import list_candidates, record_candidates
 from musicos.changelog import (
     filter_entries,
@@ -277,6 +278,85 @@ def ingest(
         print(f"FAIL import: {first_error(out)}")
         return 1
     return report_batch(env, run, batch, when, source, http, refresh_plex)
+
+
+def held_folders(run: Run) -> set[str]:
+    """The album folders beets already holds."""
+    out = run(["beet", "ls", "-a", "-f", "$path"])
+    if out.code != 0:
+        raise RuntimeError(first_error(out))
+    return {line for line in out.stdout.splitlines() if line.strip()}
+
+
+def batch(
+    env: Mapping[str, str],
+    args: argparse.Namespace,
+    when: datetime,
+    read: TagReader,
+    run: Run,
+    http: Get = http_get,
+) -> int:
+    """Import every kept album of one artist folder in one unattended run."""
+    root: Path = args.root.resolve()
+    share = check_share(str(root), run)
+    if not share.ok:
+        print_results([share])
+        return 1
+    if not root.is_dir():
+        print(f"FAIL root: {root} is not a folder")
+        return 1
+    try:
+        held = held_folders(run)
+    except RuntimeError as exc:
+        print(f"FAIL beets: {exc}")
+        return 1
+    folders = audio_folders(root)
+    releases = [describe(f, read) for f in folders if str(f) not in held]
+    groups = find_duplicates(releases)
+    logs = logs_dir(env)
+    logs.mkdir(exist_ok=True)
+    candidates_log = logs / "deletion-candidates.jsonl"
+    record_candidates(
+        candidates_log, [d for g in groups for d in decide(g)], root, when
+    )
+    status = {
+        e["folder"]: s
+        for e, s in list_candidates(candidates_log)
+        if s in ("open", "stale")
+    }
+    plan = plan_batch(releases, groups, status)
+    print(f"{len(folders) - len(releases)} folders already in beets")
+    for r in plan.candidates:
+        print(f"deletion candidate, left out: {r.folder}")
+    for r in plan.review:
+        print(f"review, left out: {r.folder}")
+    for group in plan.undecided:
+        print("choose one, then run this again:")
+        for r in group:
+            print(f"  {r.folder}")
+    for r in plan.to_split:
+        print(f"split first (musicos split): {r.folder}")
+    if not plan.kept:
+        print("nothing to import")
+        return 0
+    print(f"{len(plan.kept)} folders to import, {plan.size // 1048576} MiB copied:")
+    sources = [r.folder for r in plan.kept]
+    for source in sources:
+        print(f"  {source}")
+    dry_run = run(dry_run_command(sources))
+    if dry_run.code != 0:
+        print(f"FAIL dry run: {first_error(dry_run)}")
+        return 1
+    print(dry_run.stderr or dry_run.stdout, end="")
+    if not args.apply:
+        print("dry run: nothing imported. Add --apply to import.")
+        return 0
+    batch_id = make_batch_id(when, root)
+    out = run(import_command(sources, batch_id, logs, unattended=True))
+    if out.code != 0:
+        print(f"FAIL import: {first_error(out)}")
+        return 1
+    return report_batch(env, run, batch_id, when, root, http, not args.no_plex_refresh)
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
@@ -615,6 +695,16 @@ def main(
     ingest_parser.add_argument(
         "--no-plex-refresh", action="store_true", help="do not rescan Plex afterwards"
     )
+    batch_parser = commands.add_parser(
+        "batch", help="import the kept albums of one artist folder"
+    )
+    batch_parser.add_argument("root", type=Path, help="an artist folder")
+    batch_parser.add_argument(
+        "--apply", action="store_true", help="import (default is a dry run)"
+    )
+    batch_parser.add_argument(
+        "--no-plex-refresh", action="store_true", help="do not rescan Plex afterwards"
+    )
     summary_parser = commands.add_parser("summary", help="report on an import batch")
     summary_parser.add_argument("batch")
     summary_parser.add_argument(
@@ -704,6 +794,8 @@ def main(
             http,
             not args.no_plex_refresh,
         )
+    if args.command == "batch":
+        return batch(env, args, now(), tag_reader, run, http)
     if args.command == "split":
         return split(env, run, now(), args, which)
     if args.command == "summary":
