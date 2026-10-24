@@ -1070,3 +1070,77 @@ def test_folders_apply_needs_beetsdir_so_it_can_log(
     assert code == 1
     assert "FAIL beetsdir" in capsys.readouterr().out
     assert not (media / "music-inbox").exists()
+
+
+GAP_EXPORT = (
+    '[{"id": "1", "albumartist": "Cake", "album": "Comfort Eagle", "year": "2001", '
+    '"genres": "Alternative", "artpath": "", "path": "/lib/Cake/2001"},'
+    '{"id": "2", "albumartist": "Gatecreeper", "album": "Deserted", "year": "2019", '
+    '"genres": "Death Metal", "artpath": "/lib/g/cover.jpg", "path": "/lib/g"}]'
+)
+
+
+def gaps_run(export_code: int = 0, mounts: str = MOUNTS) -> Run:
+    def run(cmd: list[str]) -> Output:
+        if cmd[0] == "mount":
+            return Output(mounts, "", 0)
+        if cmd == ["beet", "version"]:
+            return Output(VERSION, "", 0)
+        if cmd[:2] == ["beet", "export"]:
+            if export_code:
+                return Output("", "error: no such field\n", export_code)
+            return Output(GAP_EXPORT, "", 0)
+        return Output("", "", 0)
+
+    return run
+
+
+def test_gaps_writes_the_report_and_one_log_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "last-gaps-report.md").write_text("old report")
+
+    code = main(["gaps"], env=make_beetsdir(tmp_path), run=gaps_run(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "no art: 1" in out and "no year: 0" in out
+    report = (tmp_path / "logs" / "last-gaps-report.md").read_text()
+    assert "- Cake - Comfort Eagle | /lib/Cake/2001" in report
+    assert "old report" not in report
+    log = (tmp_path / "logs" / "musicos-activity.log").read_text()
+    assert log == "2026-10-24 21:30:05 gaps 2 albums checked, 1 with gaps, 1 gaps\n"
+
+
+def test_gaps_changes_nothing_in_the_library_log(tmp_path: Path) -> None:
+    main(["gaps"], env=make_beetsdir(tmp_path), run=gaps_run(), now=lambda: NOW)
+
+    assert not (tmp_path / "logs" / "changes.jsonl").exists()
+
+
+def test_gaps_stops_when_preflight_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        ["gaps"], env=make_beetsdir(tmp_path), run=gaps_run(mounts=""), now=lambda: NOW
+    )
+
+    assert code == 1
+    assert "FAIL mount" in capsys.readouterr().out
+    assert not (tmp_path / "logs").exists()
+
+
+def test_gaps_reports_a_failing_export_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        ["gaps"],
+        env=make_beetsdir(tmp_path),
+        run=gaps_run(export_code=1),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "FAIL gaps: error: no such field" in capsys.readouterr().out
+    assert not (tmp_path / "logs").exists()

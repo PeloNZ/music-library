@@ -38,6 +38,14 @@ Don't add these plugins to the base config for someone who hasn't installed the 
 | Genres per-track instead of per-album | `beet lastgenre -A <query>` | |
 | Preview genre changes | `beet lastgenre -p <query>` | `-p`/`--pretend` |
 
+## Find the gaps first
+
+```sh
+uv run musicos gaps
+```
+
+It writes `beetsdir/logs/last-gaps-report.md`: every album with no album artist, year, genre or art, with its name and path. Use it to choose what to fetch. Report the gaps to the user. Never fill a value by guessing.
+
 ## Procedure
 
 1. Run the preflight check above. If extras aren't installed, stop and walk the user through installing them — don't attempt a workaround.

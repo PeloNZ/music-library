@@ -24,6 +24,9 @@ from musicos.folders import (
     parse_path_map,
     to_server_path,
 )
+from musicos.gaps import activity_line as gaps_activity_line
+from musicos.gaps import export_albums, find_gaps
+from musicos.gaps import render_report as render_gaps_report
 from musicos.ingest import (
     batch_items,
     dry_run_command,
@@ -330,6 +333,24 @@ def folders_command(
     return 0
 
 
+def gaps(env: Mapping[str, str], run: Run, when: datetime) -> int:
+    try:
+        albums = export_albums(run)
+    except RuntimeError as exc:
+        print(f"FAIL gaps: {exc}")
+        return 1
+    results = find_gaps(albums)
+    logs = Path(env["BEETSDIR"]) / "logs"
+    logs.mkdir(exist_ok=True)
+    report = logs / "last-gaps-report.md"
+    report.write_text(render_gaps_report(results, len(albums), when))
+    log_activity(env, gaps_activity_line(results, len(albums), when))
+    for r in results:
+        print(f"{r.name}: {len(r.albums)}")
+    print(f"report: {report}")
+    return 0
+
+
 def print_results_if_failed(results: list[Result]) -> bool:
     """Print only failures. True when every result passed."""
     failed = [r for r in results if not r.ok]
@@ -359,6 +380,7 @@ def main(
         "preflight", help="check BEETSDIR, the share mount and the plugins"
     )
     commands.add_parser("lint", help="run the read-only health checks")
+    commands.add_parser("gaps", help="report albums with no artist, year, genre or art")
     ingest_parser = commands.add_parser("ingest", help="import a folder of new music")
     ingest_parser.add_argument("source", type=Path)
     ingest_parser.add_argument(
@@ -413,6 +435,8 @@ def main(
         return 1
     if args.command == "lint":
         return lint(env, run, now())
+    if args.command == "gaps":
+        return gaps(env, run, now())
     if args.command == "ingest":
         return ingest(env, run, now(), args.source, args.unattended)
     if args.command == "split":
