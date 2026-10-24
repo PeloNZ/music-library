@@ -1,7 +1,6 @@
+import json
 from datetime import datetime
 from pathlib import Path
-
-import json
 
 from musicos.ingest import (
     dry_run_command,
