@@ -53,7 +53,7 @@ Edit `beetsdir/config.yaml`:
 
 Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/music`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/music`.
 
-Plex scripts read `PLEX_URL` and `PLEX_TOKEN` from the environment. Never put the token in the repo.
+Plex scripts read `PLEX_URL` and `PLEX_TOKEN`. Put them in an env file at the repo root, one `KEY=value` per line (`#` comments and an `export ` prefix are allowed). The file is gitignored. `musicos` loads it on every run, and a variable already set in the shell wins. A bad line stops the run and names only its line number. Never commit the token.
 
 Check the tools:
 
