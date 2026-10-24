@@ -882,3 +882,191 @@ def test_plex_refresh_logs_nothing_when_the_token_is_rejected(
     assert "FAIL plex: Plex rejected the token (401)" in out
     assert TOKEN not in out
     assert not (tmp_path / "logs").exists()
+
+
+LIBRARY_JSON = (
+    '{"MediaContainer": {"Directory": ['
+    '{"key": "5", "type": "artist", "title": "Music", '
+    '"Location": [{"id": 5, "path": "/data/jbod2/media/music"}]},'
+    '{"key": "1", "type": "movie", "title": "Movies", '
+    '"Location": [{"id": 1, "path": "/data/jbod2/media/Movies"}]}'
+    "]}}"
+)
+
+
+def media_share(tmp_path: Path) -> Path:
+    """A fake mounted `media` share, with the Plex folders in place."""
+    media = tmp_path / "media" / "jbod2" / "media"
+    (media / "music").mkdir(parents=True)
+    return media
+
+
+def folders_args(tmp_path: Path, media: Path, *extra: str) -> list[str]:
+    return [
+        "folders",
+        "--inbox",
+        str(media / "music-inbox"),
+        "--holding",
+        str(media / "music-holding"),
+        "--path-map",
+        f"{tmp_path / 'media'}=/data",
+        *extra,
+    ]
+
+
+def folders_http() -> FakeHttp:
+    return FakeHttp(routes={"/library/sections": Response(200, LIBRARY_JSON)})
+
+
+def test_folders_without_apply_shows_the_plan_and_creates_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = media_share(tmp_path)
+
+    code = main(
+        folders_args(tmp_path, media),
+        env=PLEX_ENV,
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "would create music-inbox (/data/jbod2/media/music-inbox)" in out
+    assert "dry run: nothing changed. Add --apply to create them." in out
+    assert not (media / "music-inbox").exists()
+
+
+def test_folders_apply_creates_both_with_a_plexignore_and_logs_it(
+    tmp_path: Path,
+) -> None:
+    media = media_share(tmp_path)
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    env = {**make_beetsdir(beets), **PLEX_ENV}
+
+    code = main(
+        folders_args(tmp_path, media, "--apply"),
+        env=env,
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    assert code == 0
+    for name in ("music-inbox", "music-holding"):
+        assert (media / name / ".plexignore").read_text().endswith("*\n")
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry == {
+        "time": "2026-10-24T21:30:05",
+        "action": "folders",
+        "created": [str(media / "music-inbox"), str(media / "music-holding")],
+        "plexignore": [
+            str(media / "music-inbox" / ".plexignore"),
+            str(media / "music-holding" / ".plexignore"),
+        ],
+    }
+
+
+def test_folders_apply_twice_logs_nothing_the_second_time(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = media_share(tmp_path)
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    env = {**make_beetsdir(beets), **PLEX_ENV}
+    args = folders_args(tmp_path, media, "--apply")
+    main(args, env=env, http=folders_http(), now=lambda: NOW)
+    capsys.readouterr()
+
+    code = main(args, env=env, http=folders_http(), now=lambda: NOW)
+
+    assert code == 0
+    assert "already in place" in capsys.readouterr().out
+    assert len(read_entries(beets / "logs" / "changes.jsonl")) == 1
+
+
+def test_folders_refuses_a_folder_inside_a_plex_library(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = media_share(tmp_path)
+    args = [
+        "folders",
+        "--inbox",
+        str(media / "music" / "_inbox"),
+        "--holding",
+        str(media / "music-holding"),
+        "--path-map",
+        f"{tmp_path / 'media'}=/data",
+        "--apply",
+    ]
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        args,
+        env={**make_beetsdir(beets), **PLEX_ENV},
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "FAIL folders: " in capsys.readouterr().out
+    assert not (media / "music" / "_inbox").exists()
+    assert not (media / "music-holding").exists()
+
+
+def test_folders_stops_when_no_path_map_covers_a_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = media_share(tmp_path)
+    args = folders_args(tmp_path, media)
+    args[args.index("--path-map") + 1] = "/Volumes/elsewhere=/data"
+
+    code = main(args, env=PLEX_ENV, http=folders_http(), now=lambda: NOW)
+
+    assert code == 1
+    assert "no --path-map covers" in capsys.readouterr().out
+
+
+def test_folders_takes_the_path_map_from_the_environment(tmp_path: Path) -> None:
+    media = media_share(tmp_path)
+    args = folders_args(tmp_path, media)
+    del args[args.index("--path-map") : args.index("--path-map") + 2]
+    env = {**PLEX_ENV, "PLEX_PATH_MAP": f"{tmp_path / 'media'}=/data"}
+
+    code = main(args, env=env, http=folders_http(), now=lambda: NOW)
+
+    assert code == 0
+
+
+def test_folders_apply_with_a_missing_mount_creates_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = tmp_path / "media" / "jbod2" / "media"  # share not mounted: no folders
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        folders_args(tmp_path, media, "--apply"),
+        env={**make_beetsdir(beets), **PLEX_ENV},
+        http=folders_http(),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert "is the share mounted" in capsys.readouterr().out
+    assert not (tmp_path / "media").exists()
+
+
+def test_folders_apply_needs_beetsdir_so_it_can_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    media = media_share(tmp_path)
+
+    code = main(
+        folders_args(tmp_path, media, "--apply"), env=PLEX_ENV, http=folders_http()
+    )
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out
+    assert not (media / "music-inbox").exists()

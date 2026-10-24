@@ -10,13 +10,20 @@ import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
 from musicos.changelog import filter_entries, format_entry, read_entries, record
 from musicos.envfile import merged_env
+from musicos.folders import (
+    FolderError,
+    check_outside_plex,
+    create_plex_free_folder,
+    parse_path_map,
+    to_server_path,
+)
 from musicos.ingest import (
     batch_items,
     dry_run_command,
@@ -271,6 +278,58 @@ def plex_command(
     return 0
 
 
+def folders_command(
+    env: Mapping[str, str], args: argparse.Namespace, when: datetime, http: Get
+) -> int:
+    if args.apply and not print_results_if_failed([check_beetsdir(env)]):
+        return 1  # making the folders is a change, so it must be logged
+    plan: list[tuple[Path, PurePosixPath]] = []
+    try:
+        sections = plex_from_env(env, http).sections()
+    except PlexError as exc:
+        print(f"FAIL plex: {exc}")
+        return 1
+    libraries = [PurePosixPath(p) for section in sections for p in section.locations]
+    from_env = [m for m in env.get("PLEX_PATH_MAP", "").split(",") if m]
+    try:
+        maps = parse_path_map(args.path_map or from_env)
+        for folder in (args.inbox.resolve(), args.holding.resolve()):
+            server = to_server_path(folder, maps)
+            if server is None:
+                raise FolderError(f"no --path-map covers {folder}")
+            check_outside_plex(server, libraries)
+            if not folder.parent.is_dir():
+                raise FolderError(
+                    f"{folder.parent} does not exist; is the share mounted?"
+                )
+            plan.append((folder, server))
+    except FolderError as exc:
+        print(f"FAIL folders: {exc}")
+        return 1
+    if not args.apply:
+        for folder, server in plan:
+            verb = "exists" if folder.exists() else "would create"
+            print(f"{verb} {folder.name} ({server})")
+        print("dry run: nothing changed. Add --apply to create them.")
+        return 0
+    results = [create_plex_free_folder(folder) for folder, _ in plan]
+    created = [str(r.path) for r in results if r.made]
+    ignores = [str(r.path / ".plexignore") for r in results if r.plexignore_written]
+    if not created and not ignores:
+        print("already in place")
+        return 0
+    record(
+        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        "folders",
+        when,
+        created=created,
+        plexignore=ignores,
+    )
+    for folder, server in plan:
+        print(f"ok   {folder} ({server})")
+    return 0
+
+
 def print_results_if_failed(results: list[Result]) -> bool:
     """Print only failures. True when every result passed."""
     failed = [r for r in results if not r.ok]
@@ -323,6 +382,19 @@ def main(
     refresh_parser.add_argument(
         "--section", help="library id or title (or set PLEX_SECTION)"
     )
+    folders_parser = commands.add_parser(
+        "folders", help="make inbox and holding folders that Plex ignores"
+    )
+    folders_parser.add_argument("--inbox", type=Path, required=True)
+    folders_parser.add_argument("--holding", type=Path, required=True)
+    folders_parser.add_argument(
+        "--path-map",
+        action="append",
+        help="MAC=SERVER, for example /Volumes/media=/data (or set PLEX_PATH_MAP)",
+    )
+    folders_parser.add_argument(
+        "--apply", action="store_true", help="create the folders (default is a dry run)"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -335,6 +407,8 @@ def main(
         return show_log(env, args)
     if args.command == "plex":
         return plex_command(env, args, now(), http)
+    if args.command == "folders":
+        return folders_command(env, args, now(), http)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":
