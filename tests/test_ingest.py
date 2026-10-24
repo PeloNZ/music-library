@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from musicos.ingest import make_batch_id
+from musicos.ingest import dry_run_command, import_command, make_batch_id
 
 WHEN = datetime(2026, 10, 24, 21, 40)
 
@@ -25,3 +25,33 @@ def test_batch_id_slug_is_cut_at_40_characters() -> None:
     assert make_batch_id(WHEN, folder) == (
         "20261024-2140-red-hot-chili-peppers-what-hits-1992-fla"
     )
+
+
+SOURCE = Path("/Volumes/music/_inbox/Gatecreeper-2019-Deserted")
+BATCH = "20261024-2140-gatecreeper-2019-deserted"
+LOGS = Path("/repo/beetsdir/logs")
+
+
+def test_dry_run_only_lists_files() -> None:
+    assert dry_run_command(SOURCE) == ["beet", "import", "--pretend", str(SOURCE)]
+
+
+def test_assisted_import_logs_and_tags_the_batch() -> None:
+    assert import_command(SOURCE, BATCH, LOGS, unattended=False) == [
+        "beet",
+        "import",
+        "-l",
+        f"/repo/beetsdir/logs/import-{BATCH}.log",
+        "--set",
+        f"musicos_batch={BATCH}",
+        str(SOURCE),
+    ]
+
+
+def test_unattended_import_skips_what_it_cannot_match() -> None:
+    cmd = import_command(SOURCE, BATCH, LOGS, unattended=True)
+
+    assert cmd[-4:-1] == ["-q", "--quiet-fallback", "skip"]
+    assert cmd[-1] == str(SOURCE)
+    assert "-l" in cmd
+    assert f"musicos_batch={BATCH}" in cmd
