@@ -55,7 +55,14 @@ from musicos.preflight import (
     configured_plugins,
 )
 from musicos.runner import Run, run_command
-from musicos.split import SplitError, cue_track_count, read_cue, scan, split_rip
+from musicos.split import (
+    SplitError,
+    check_one_share,
+    cue_track_count,
+    read_cue,
+    scan,
+    split_rip,
+)
 
 # Settings kept out of the repo and out of shell history, such as PLEX_TOKEN.
 # Variables already set in the shell take priority.
@@ -278,6 +285,11 @@ def split(
         if folder == root or root in folder.parents:
             print(f"FAIL {name}: {folder} is inside {root}; a later scan would find it")
             return 1
+    try:
+        check_one_share(root, inbox, holding)
+    except SplitError as exc:
+        print(f"FAIL shares: {exc}")
+        return 1
     found = scan(root)
     for rip in found.rips:
         count = cue_track_count(read_cue(rip.cue))
@@ -297,9 +309,6 @@ def split(
             print(f"FAIL {label}: {exc}")
             failed = True
             continue
-        extra: dict[str, Any] = (
-            {"source_dir_left": True} if result.source_dir_left else {}
-        )
         record(
             Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
             "split",
@@ -310,12 +319,7 @@ def split(
             track_count=result.track_count,
             tracks=[str(t) for t in result.tracks],
             holding=str(result.holding),
-            **extra,
         )
-        if result.source_dir_left:
-            print(
-                f"WARN {label}: could not remove the emptied source folder {rip.folder}"
-            )
         print(f"ok   {label}: {result.track_count} tracks in {inbox / rip.folder.name}")
     return 1 if failed else 0
 

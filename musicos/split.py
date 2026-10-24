@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import os
 import re
 import shutil
@@ -71,12 +70,29 @@ class SplitError(Exception):
     pass
 
 
+def device_of(path: Path) -> int:
+    """The device id of a path, or of its nearest existing parent. Each mounted
+    share has its own, so two paths on one share have the same id."""
+    for candidate in (path, *path.parents):
+        if candidate.exists():
+            return os.stat(candidate).st_dev
+    raise SplitError(f"{path} has no parent folder that exists")
+
+
+def check_one_share(*paths: Path) -> None:
+    """Moves must be renames on one share. Nothing is copied between shares."""
+    if len({device_of(p) for p in paths}) > 1:
+        raise SplitError(
+            "the source, the inbox and the holding folder must be on one share: "
+            + ", ".join(str(p) for p in paths)
+        )
+
+
 @dataclass(frozen=True)
 class SplitResult:
     tracks: list[Path]
     track_count: int
     holding: Path
-    source_dir_left: bool = False  # the emptied source folder could not be removed
 
 
 def _check(out: Output, tool: str) -> Output:
@@ -94,6 +110,7 @@ def split_rip(rip: Rip, inbox: Path, holding: Path, run: Run) -> SplitResult:
     leaves the source as it was. Nothing in the source is deleted, and an
     existing album is never overwritten.
     """
+    check_one_share(rip.folder, inbox, holding)
     count = cue_track_count(read_cue(rip.cue))
     if count == 0:
         raise SplitError(f"{rip.cue.name} lists no audio tracks")
@@ -128,58 +145,9 @@ def split_rip(rip: Rip, inbox: Path, holding: Path, run: Run) -> SplitResult:
     staging.rename(album)
     holding.mkdir(parents=True, exist_ok=True)
     try:
-        source_dir_left = move_folder(rip.folder, held)
-    except (OSError, SplitError) as exc:
+        os.rename(rip.folder, held)
+    except OSError as exc:
         raise SplitError(
             f"the tracks are in {album} but the source was not moved: {exc}"
         ) from exc
-    return SplitResult(sorted(album.glob("*.flac")), count, held, source_dir_left)
-
-
-def _tree_sizes(folder: Path) -> dict[Path, int]:
-    """Every file under a folder, as relative path and size."""
-    return {
-        p.relative_to(folder): p.stat().st_size
-        for p in folder.rglob("*")
-        if p.is_file()
-    }
-
-
-def move_folder(source: Path, target: Path) -> bool:
-    """Move a folder. Returns True when the emptied source folder is left behind.
-
-    A rename is used when it works. Between two shares it does not, so the
-    files are copied, checked by size, and only then removed from the source.
-    A failed or short copy removes the partial copy and leaves the source as
-    it was. Files are copied without extended attributes, because on an SMB
-    share those become `._` files. A source folder that cannot be removed
-    after its files are gone is reported, not raised.
-    """
-    try:
-        os.rename(source, target)
-        return False
-    except OSError as exc:
-        if exc.errno != errno.EXDEV:
-            raise
-    try:
-        for path in sorted(source.rglob("*")):
-            destination = target / path.relative_to(source)
-            if path.is_dir():
-                destination.mkdir(parents=True, exist_ok=True)
-            elif path.is_file():
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, destination)
-                os.utime(destination, (path.stat().st_atime, path.stat().st_mtime))
-        target.mkdir(parents=True, exist_ok=True)
-        if _tree_sizes(source) != _tree_sizes(target):
-            raise SplitError("a copied file differs in size from the original")
-    except BaseException:
-        shutil.rmtree(target, ignore_errors=True)  # made above, holds only the copy
-        raise
-    for path in sorted(source.rglob("*"), reverse=True):
-        path.rmdir() if path.is_dir() else path.unlink()
-    try:
-        source.rmdir()
-    except OSError:
-        return True
-    return False
+    return SplitResult(sorted(album.glob("*.flac")), count, held)

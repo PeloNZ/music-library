@@ -1,6 +1,5 @@
 import errno
 import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -9,6 +8,7 @@ from musicos.split import (
     Rip,
     SplitError,
     cue_track_count,
+    device_of,
     read_cue,
     scan,
     split_rip,
@@ -234,84 +234,48 @@ def cross_device(monkeypatch: pytest.MonkeyPatch, source: Path) -> None:
     monkeypatch.setattr(os, "rename", rename)
 
 
-def test_a_cross_device_move_copies_verifies_then_removes_the_source(
+def test_a_source_on_another_share_is_refused_before_anything_is_made(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rip = make_rip(tmp_path)
-    (rip.folder / "Scans").mkdir()
-    (rip.folder / "Scans" / "Cover_01.jpg").write_bytes(b"img")
-    cross_device(monkeypatch, rip.folder)
+    tools = Tools()
+    holding = tmp_path / "holding"
+    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == holding else 1)
 
-    result = split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
+    with pytest.raises(SplitError, match="one share"):
+        split_rip(rip, tmp_path / "inbox", tmp_path / "holding", tools)
 
-    held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
-    assert (held / "Deserted.flac").read_bytes() == b"big"
-    assert (held / "Scans" / "Cover_01.jpg").read_bytes() == b"img"
-    assert not rip.folder.exists()
-    assert not result.source_dir_left
+    assert tools.commands == []
+    assert not (tmp_path / "inbox").exists()
+    assert rip.flac.read_bytes() == b"big"
 
 
-def test_a_source_folder_that_cannot_be_removed_is_a_warning_not_a_crash(
+def test_an_inbox_on_another_share_is_refused_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rip = make_rip(tmp_path)
-    cross_device(monkeypatch, rip.folder)
-    real_rmdir = Path.rmdir
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == inbox else 1)
 
-    def rmdir(self: Path) -> None:
-        if self == rip.folder:
-            raise PermissionError(errno.EACCES, "Permission denied")
-        real_rmdir(self)
-
-    monkeypatch.setattr(Path, "rmdir", rmdir)
-
-    result = split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
-
-    assert result.source_dir_left
-    assert list(rip.folder.iterdir()) == []
-    held = tmp_path / "holding" / "Gatecreeper-2019-Deserted"
-    assert (held / "Deserted.flac").read_bytes() == b"big"
-    assert result.holding == held
-
-
-def test_a_failed_copy_leaves_the_source_alone_and_removes_the_partial_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rip = make_rip(tmp_path)
-    cross_device(monkeypatch, rip.folder)
-    real_copyfile = shutil.copyfile
-
-    def copyfile(src: Path, dst: Path) -> object:
-        if str(src).endswith(".flac") and "holding" in str(dst):
-            raise OSError(errno.ENOSPC, "No space left on device")
-        return real_copyfile(src, dst)
-
-    monkeypatch.setattr(shutil, "copyfile", copyfile)
-
-    with pytest.raises(SplitError, match="source was not moved.*No space left"):
+    with pytest.raises(SplitError, match="one share"):
         split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
 
-    assert rip.flac.read_bytes() == b"big"
-    assert rip.cue.exists()
-    assert not (tmp_path / "holding" / "Gatecreeper-2019-Deserted").exists()
+    assert not (tmp_path / "inbox").exists()
 
 
-def test_a_copy_that_differs_in_size_is_caught_before_anything_is_deleted(
+def test_device_of_a_folder_that_does_not_exist_yet_is_its_nearest_parent(
+    tmp_path: Path,
+) -> None:
+    assert device_of(tmp_path / "holding" / "deeper") == device_of(tmp_path)
+
+
+def test_a_rename_the_server_refuses_leaves_the_source_and_never_copies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rip = make_rip(tmp_path)
     cross_device(monkeypatch, rip.folder)
-    real_copyfile = shutil.copyfile
 
-    def truncating_copyfile(src: Path, dst: Path) -> object:
-        real_copyfile(src, dst)
-        if str(src).endswith(".flac"):
-            dst.write_bytes(b"bi")  # short copy
-        return dst
-
-    monkeypatch.setattr(shutil, "copyfile", truncating_copyfile)
-
-    with pytest.raises(SplitError, match="size"):
+    with pytest.raises(SplitError, match="source was not moved"):
         split_rip(rip, tmp_path / "inbox", tmp_path / "holding", Tools())
 
     assert rip.flac.read_bytes() == b"big"

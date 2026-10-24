@@ -11,7 +11,7 @@ from musicos.plex import Response
 from musicos.runner import Output, Run
 from tests.fakes import FakeHttp, Tools
 from tests.test_appledouble import shadow
-from tests.test_split import CUE, cross_device
+from tests.test_split import CUE
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"
@@ -1265,40 +1265,6 @@ def test_summary_rescans_once_per_batch(tmp_path: Path) -> None:
     assert http.paths().count("/library/sections/5/refresh") == 1
 
 
-def test_split_warns_when_the_emptied_source_folder_cannot_be_removed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    beets = tmp_path / "beets"
-    beets.mkdir()
-    make_rips(tmp_path / "src", "Deserted")
-    source = (tmp_path / "src" / "Deserted").resolve()
-    cross_device(monkeypatch, source)
-    real_rmdir = Path.rmdir
-
-    def rmdir(self: Path) -> None:
-        if self == source:
-            raise PermissionError(errno.EACCES, "Permission denied")
-        real_rmdir(self)
-
-    monkeypatch.setattr(Path, "rmdir", rmdir)
-
-    code = main(
-        split_args(tmp_path, "--apply"),
-        env=make_beetsdir(beets),
-        run=SplitTools(),
-        now=lambda: NOW,
-        which=have_tools,
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert f"WARN Deserted: could not remove the emptied source folder {source}" in out
-    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
-    assert entry["source_dir_left"] is True
-
-
 def test_split_reports_a_file_system_error_as_a_failure_and_carries_on(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1481,3 +1447,28 @@ def test_clean_appledouble_stops_when_the_root_is_not_a_folder(
 
     assert code == 1
     assert "FAIL root: " in capsys.readouterr().out
+
+
+def test_split_dry_run_already_refuses_folders_on_different_shares(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+    holding = (tmp_path / "holding").resolve()
+    monkeypatch.setattr("musicos.split.device_of", lambda p: 2 if p == holding else 1)
+
+    code = main(
+        split_args(tmp_path),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL shares: " in out and "one share" in out
+    assert "Deserted (3 tracks)" not in out
