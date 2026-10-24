@@ -1,5 +1,6 @@
 # Dependencies (created by `uv sync`)
 .venv/
+.env
 
 # beets state: config holds the AcoustID key; the DBs and logs are local to this machine
 /beetsdir/config.yaml
