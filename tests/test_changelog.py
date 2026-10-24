@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from musicos.changelog import read_entries, record
+from musicos.changelog import Entry, filter_entries, read_entries, record
 
 WHEN = datetime(2026, 10, 24, 21, 30, 5)
 
@@ -56,3 +56,47 @@ def test_read_entries_names_the_corrupt_line(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="line 2"):
         read_entries(log)
+
+
+ENTRIES: list[Entry] = [
+    {"time": "2026-10-22T09:00:00", "action": "import", "batch": "b1"},
+    {"time": "2026-10-23T09:00:00", "action": "move", "batch": "b1"},
+    {"time": "2026-10-24T09:00:00", "action": "import", "batch": "b2"},
+    {"time": "2026-10-24T10:00:00", "action": "split"},
+]
+
+
+def times(entries: list[Entry]) -> list[str]:
+    return [e["time"][5:13] for e in entries]
+
+
+def test_filter_by_batch_drops_entries_without_one() -> None:
+    assert times(filter_entries(ENTRIES, batch="b1")) == ["10-22T09", "10-23T09"]
+
+
+def test_filter_by_action() -> None:
+    assert times(filter_entries(ENTRIES, action="import")) == ["10-22T09", "10-24T09"]
+
+
+def test_filter_since_keeps_entries_from_that_time_on() -> None:
+    since = datetime(2026, 10, 24, 9, 0, 0)
+
+    assert times(filter_entries(ENTRIES, since=since)) == ["10-24T09", "10-24T10"]
+
+
+def test_filter_last_keeps_the_newest_in_order() -> None:
+    assert times(filter_entries(ENTRIES, last=2)) == ["10-24T09", "10-24T10"]
+
+
+def test_filters_combine() -> None:
+    result = filter_entries(ENTRIES, action="import", last=1)
+
+    assert times(result) == ["10-24T09"]
+
+
+def test_no_filters_returns_everything() -> None:
+    assert filter_entries(ENTRIES) == ENTRIES
+
+
+def test_filter_last_zero_keeps_nothing() -> None:
+    assert filter_entries(ENTRIES, last=0) == []

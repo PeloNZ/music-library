@@ -35,3 +35,23 @@ def read_entries(path: Path) -> list[Entry]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}: line {number} is not valid JSON") from exc
     return entries
+
+
+def filter_entries(
+    entries: list[Entry],
+    batch: str | None = None,
+    action: str | None = None,
+    since: datetime | None = None,
+    last: int | None = None,
+) -> list[Entry]:
+    """Keep entries that match every given filter, then the newest `last`."""
+    kept = [
+        e
+        for e in entries
+        if (batch is None or e.get("batch") == batch)
+        and (action is None or e["action"] == action)
+        and (since is None or datetime.fromisoformat(e["time"]) >= since)
+    ]
+    if last is None:
+        return kept
+    return kept[max(len(kept) - last, 0) :]
