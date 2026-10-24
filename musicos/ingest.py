@@ -61,9 +61,9 @@ def import_command(
     return cmd + [str(s) for s in sources]
 
 
-def progress_log(logs: Path, batch: str) -> Path:
-    """Everything beets prints during the import, written as it appears."""
-    return logs / f"import-{batch}.out"
+def progress_log(logs: Path, batch: str, prefix: str = "import") -> Path:
+    """Everything a long tool prints during a run, written as it appears."""
+    return logs / f"{prefix}-{batch}.out"
 
 
 RETRY_SUFFIX = "-retry"

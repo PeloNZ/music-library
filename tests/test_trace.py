@@ -1,16 +1,14 @@
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from musicos.changelog import read_entries
 from musicos.trace import Trace
+from tests.fakes import clock
 
 T0 = datetime(2026, 10, 25, 9, 10, 4)
 T1 = datetime(2026, 10, 25, 9, 14, 40)
-
-
-def clock(*times: datetime):  # type: ignore[no-untyped-def]
-    ticks = iter(times)
-    return lambda: next(ticks)
 
 
 def test_start_and_done_are_activity_lines_stamped_when_they_happen(
@@ -61,3 +59,54 @@ def test_lines_are_appended_after_earlier_ones(tmp_path: Path) -> None:
     Trace(tmp_path, clock(T0), "folders", "inbox").start()
 
     assert (tmp_path / "musicos-activity.log").read_text().startswith("earlier\n")
+
+
+def test_control_characters_in_a_name_cannot_start_a_new_log_line(
+    tmp_path: Path,
+) -> None:
+    forged = "X\n2026-10-25 09:00:00 clean-appledouble /Volumes/m done deleted 9"
+    trace = Trace(tmp_path, clock(T0), "split", forged)
+
+    trace.start("a\x1b[2Jb\u2028c")
+
+    lines = (tmp_path / "musicos-activity.log").read_text().splitlines()
+    assert len(lines) == 1
+    assert lines[0].endswith("start a?[2Jb?c")
+
+
+def test_a_failure_entry_carries_the_fields_it_was_given(tmp_path: Path) -> None:
+    trace = Trace(tmp_path, clock(T1), "ingest", "b1", batch="b1")
+
+    trace.fail("boom")
+
+    (entry,) = read_entries(tmp_path / "changes.jsonl")
+    assert entry["batch"] == "b1"
+
+
+def test_guard_logs_an_unexpected_error_and_lets_it_go_on(tmp_path: Path) -> None:
+    trace = Trace(tmp_path, clock(T1), "split", "Deserted")
+
+    with pytest.raises(OSError, match="disk gone"), trace.guard():
+        raise OSError("disk gone")
+
+    assert (tmp_path / "musicos-activity.log").read_text() == (
+        "2026-10-25 09:14:40 split Deserted FAIL OSError: disk gone\n"
+    )
+
+
+def test_guard_logs_an_interrupt(tmp_path: Path) -> None:
+    trace = Trace(tmp_path, clock(T1), "split", "Deserted")
+
+    with pytest.raises(KeyboardInterrupt), trace.guard():
+        raise KeyboardInterrupt
+
+    assert "FAIL KeyboardInterrupt" in (tmp_path / "musicos-activity.log").read_text()
+
+
+def test_guard_writes_nothing_when_nothing_goes_wrong(tmp_path: Path) -> None:
+    trace = Trace(tmp_path, clock(T1), "split", "Deserted")
+
+    with trace.guard():
+        pass
+
+    assert not (tmp_path / "musicos-activity.log").exists()

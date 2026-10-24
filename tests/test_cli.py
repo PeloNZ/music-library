@@ -10,7 +10,7 @@ from musicos.cli import main
 from musicos.dupes import Tags
 from musicos.plex import Response
 from musicos.runner import Output, Run, Stream
-from tests.fakes import FakeHttp, Tools, on_another_device
+from tests.fakes import FakeHttp, Tools, clock, on_another_device
 from tests.test_appledouble import shadow
 from tests.test_split import CUE
 
@@ -268,22 +268,19 @@ def test_unattended_ingest_reports_a_failed_import(
     (entry,) = read_entries(beets / "logs" / "changes.jsonl")
     assert entry["action"] == "failed"
     assert entry["command"] == "ingest"
+    assert entry["batch"] == "20261024-2130-deserted"
     assert entry["error"] == "import failed"
 
 
 def test_each_log_line_is_stamped_when_it_is_written(tmp_path: Path) -> None:
     beets = tmp_path / "beets"
     beets.mkdir()
-    ticks = iter(range(100))
-
-    def clock() -> datetime:
-        return datetime(2026, 10, 24, 21, next(ticks))
 
     main(
         ["ingest", str(make_source(tmp_path)), "--unattended"],
         env=make_beetsdir(beets),
         run=Recorder(),
-        now=clock,
+        now=clock(*(datetime(2026, 10, 24, 21, minute) for minute in range(30))),
     )
 
     start, end = (beets / "logs" / "musicos-activity.log").read_text().splitlines()
@@ -1607,7 +1604,8 @@ def test_clean_appledouble_reports_a_file_it_cannot_delete_and_carries_on(
     out = capsys.readouterr().out
     assert code == 1
     assert "FAIL ._cover.jpg: Permission denied" in out
-    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    failure, entry = read_entries(beets / "logs" / "changes.jsonl")
+    assert failure["action"] == "failed"
     assert entry["deleted"] == 1 and entry["failed"] == 1
 
 
@@ -2278,3 +2276,100 @@ def test_clean_appledouble_dry_run_writes_no_activity_lines(tmp_path: Path) -> N
     main(["clean-appledouble", str(root)], env=make_beetsdir(beets), now=lambda: NOW)
 
     assert not (beets / "logs" / "musicos-activity.log").exists()
+
+
+def test_unattended_ingest_prints_the_log_to_follow_before_the_import_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets),
+        run=Recorder(),
+        now=lambda: NOW,
+        stream=FakeStream(),
+    )
+
+    out = capsys.readouterr().out
+    assert f"following: {beets / 'logs' / 'import-20261024-2130-deserted.out'}" in out
+
+
+class SummaryFails(Recorder):
+    def __call__(self, cmd: list[str]) -> Output:
+        if cmd[:2] == ["beet", "export"]:
+            return Output("", "export broke\n", 1)
+        return super().__call__(cmd)
+
+
+def test_an_import_whose_summary_fails_still_ends_in_the_activity_log(
+    tmp_path: Path,
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets),
+        run=SummaryFails(),
+        now=lambda: NOW,
+    )
+
+    assert code == 1
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines()[-1] == (
+        "2026-10-24 21:30:05 ingest 20261024-2130-deserted FAIL "
+        "the import ran but the summary failed"
+    )
+
+
+class ToolCrashes(SplitTools):
+    def __call__(self, cmd: list[str]) -> Output:
+        if cmd[0] == "shnsplit":
+            raise OSError("no space left")
+        return super().__call__(cmd)
+
+
+def test_split_logs_an_unexpected_error_before_it_stops(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    with pytest.raises(OSError, match="no space left"):
+        main(
+            split_args(tmp_path, "--apply"),
+            env=make_beetsdir(beets),
+            run=ToolCrashes(),
+            now=lambda: NOW,
+            which=have_tools,
+        )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines()[-1] == (
+        "2026-10-24 21:30:05 split Deserted FAIL OSError: no space left"
+    )
+
+
+def test_clean_appledouble_logs_a_run_with_failed_deletes_as_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = dirty_share(tmp_path / "share")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "._cover.jpg":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    main(
+        ["clean-appledouble", str(root), "--apply"],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+    )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines()[-1] == (
+        f"2026-10-24 21:30:05 clean-appledouble {root} FAIL deleted 1, failed 1"
+    )

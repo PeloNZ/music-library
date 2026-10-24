@@ -31,9 +31,9 @@ Stream = Callable[[list[str], Path], Output]
 def stream_command(cmd: list[str], log: Path) -> Output:
     """Run a command and write each line it prints, stdout and stderr in order,
     to `log` and the terminal as it appears, so `tail -f` follows a long run.
-    `stderr` of the result holds the last line, which is where errors end up."""
+    `stderr` of the result holds the last line that is not blank, which is where errors end up."""
     lines: list[str] = []
-    with log.open("a") as out_log:
+    with log.open("a", encoding="utf-8", errors="replace") as out_log:
         out_log.write(f"$ {shlex.join(cmd)}\n")
         out_log.flush()
         child = subprocess.Popen(
@@ -41,6 +41,7 @@ def stream_command(cmd: list[str], log: Path) -> Output:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         assert child.stdout is not None
@@ -50,7 +51,7 @@ def stream_command(cmd: list[str], log: Path) -> Output:
             out_log.flush()
             print(line, end="", flush=True)
         code = child.wait()
-    last = lines[-1].strip() if lines else ""
+    last = next((line.strip() for line in reversed(lines) if line.strip()), "")
     return Output("".join(lines), last, code)
 
 

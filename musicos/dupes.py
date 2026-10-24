@@ -19,6 +19,7 @@ import mutagen
 
 from musicos.ingest import AUDIO_SUFFIXES
 from musicos.split import cue_track_count, files_with_suffix, read_cue
+from musicos.text import printable
 
 
 @dataclass(frozen=True)
@@ -68,11 +69,6 @@ def most_common(values: list[str], default: str = "") -> str:
     return counted.most_common(1)[0][0] if counted else default
 
 
-def _printable(text: str) -> str:
-    """Control characters in a tag or cue name would act on the terminal."""
-    return re.sub(r"[\x00-\x1f\x7f]", "?", text)
-
-
 def cue_header(text: str) -> dict[str, str]:
     """Artist and album from the lines before the first TRACK."""
     header: dict[str, str] = {}
@@ -81,9 +77,9 @@ def cue_header(text: str) -> dict[str, str]:
         if re.match(r"TRACK\s+\d+", line, re.IGNORECASE):
             break
         if match := re.match(r'PERFORMER\s+"(.*)"', line, re.IGNORECASE):
-            header.setdefault("artist", _printable(match[1]))
+            header.setdefault("artist", printable(match[1]))
         elif match := re.match(r'TITLE\s+"(.*)"', line, re.IGNORECASE):
-            header.setdefault("album", _printable(match[1]))
+            header.setdefault("album", printable(match[1]))
     return header
 
 
@@ -219,7 +215,7 @@ def read_tags(path: Path) -> Tags | None:
 
     def first(key: str) -> str:
         values = audio.get(key) or [""]
-        return _printable(str(values[0]).strip())
+        return printable(str(values[0]).strip())
 
     info = audio.info
     suffix = path.suffix.lstrip(".").upper()

@@ -20,6 +20,8 @@ from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.batch import plan_batch
 from musicos.candidates import list_candidates, record_candidates, status_of
 from musicos.changelog import (
+    CHANGES_LOG,
+    append_activity,
     filter_entries,
     format_entry,
     read_entries,
@@ -143,7 +145,7 @@ def logs_dir(env: Mapping[str, str]) -> Path:
 
 
 def changes_log(env: Mapping[str, str]) -> Path:
-    return logs_dir(env) / "changes.jsonl"
+    return logs_dir(env) / CHANGES_LOG
 
 
 def user_command(env: Mapping[str, str], cmd: list[str]) -> str:
@@ -152,10 +154,7 @@ def user_command(env: Mapping[str, str], cmd: list[str]) -> str:
 
 
 def log_activity(env: Mapping[str, str], line: str) -> None:
-    logs = logs_dir(env)
-    logs.mkdir(exist_ok=True)
-    with (logs / "musicos-activity.log").open("a") as log:
-        log.write(line + "\n")
+    append_activity(logs_dir(env), line)
 
 
 def report_batch(
@@ -173,6 +172,7 @@ def report_batch(
     except RuntimeError as exc:
         print(f"FAIL summary: {exc}")
         return 1
+    when = now()
     flagged = len(summary.flagged)
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:
@@ -200,7 +200,7 @@ def report_batch(
         record(
             changes,
             "import",
-            now(),
+            when,
             **fields,
             albums=summary.albums,
             flagged=flagged,
@@ -209,7 +209,7 @@ def report_batch(
         )
     log_activity(
         env,
-        f"{stamp(now())} ingest {batch} {summary.albums} albums, {flagged} flagged",
+        f"{stamp(when)} ingest {batch} {summary.albums} albums, {flagged} flagged",
     )
     if refresh_plex and not already:
         rescan_plex(env, http, now, batch)
@@ -263,6 +263,9 @@ def show_dry_run(run: Run, sources: list[Path], incremental: bool = False) -> bo
     return True
 
 
+SUMMARY_FAILED = "the import ran but the summary failed"
+
+
 def run_import(
     run: Run,
     stream: Stream | None,
@@ -272,7 +275,10 @@ def run_import(
     detail: str = "",
 ) -> bool:
     trace.start(detail)
-    out = stream(cmd, log) if stream else run(cmd)
+    if stream:
+        print(f"following: {log}")
+    with trace.guard():
+        out = stream(cmd, log) if stream else run(cmd)
     if out.code != 0:
         error = first_error(out)
         print(f"FAIL import: {error}")
@@ -305,10 +311,13 @@ def ingest(
         print(f"  {user_command(env, cmd)}")
         print(f"Then: {user_command(env, ['musicos', 'summary', batch])}")
         return 0
-    trace = Trace(logs, now, "ingest", batch)
+    trace = Trace(logs, now, "ingest", batch, batch=batch)
     if not run_import(run, stream, cmd, progress_log(logs, batch), trace):
         return 1
-    return report_batch(env, run, batch, now, source, http, refresh_plex)
+    code = report_batch(env, run, batch, now, source, http, refresh_plex)
+    if code:
+        trace.fail(SUMMARY_FAILED)
+    return code
 
 
 def root_ok(root: Path, run: Run) -> bool:
@@ -381,12 +390,15 @@ def batch_command(
         return 0
     batch_id = make_batch_id(now(), root)
     cmd = import_command(sources, batch_id, logs, unattended=True, incremental=True)
-    trace = Trace(logs, now, "batch", batch_id)
+    trace = Trace(logs, now, "batch", batch_id, batch=batch_id)
     if not run_import(
         run, stream, cmd, progress_log(logs, batch_id), trace, f"{len(sources)} folders"
     ):
         return 1
-    return report_batch(env, run, batch_id, now, root, http, not args.no_plex_refresh)
+    code = report_batch(env, run, batch_id, now, root, http, not args.no_plex_refresh)
+    if code:
+        trace.fail(SUMMARY_FAILED)
+    return code
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
@@ -442,9 +454,9 @@ def split(
         print(f"FAIL shares: {exc}")
         return 1
     found = scan(root)
+    counts = {rip.folder: cue_track_count(read_cue(rip.cue)) for rip in found.rips}
     for rip in found.rips:
-        count = cue_track_count(read_cue(rip.cue))
-        print(f"  {rip.folder.relative_to(root)} ({count} tracks)")
+        print(f"  {rip.folder.relative_to(root)} ({counts[rip.folder]} tracks)")
     if found.ambiguous:
         names = ", ".join(str(p.relative_to(root)) for p in found.ambiguous)
         print(f"ambiguous (one FLAC, several cue sheets): {names}")
@@ -456,17 +468,17 @@ def split(
     for rip in found.rips:
         label = rip.folder.relative_to(root)
         trace = Trace(logs, now, "split", str(label))
-        trace.start(f"{cue_track_count(read_cue(rip.cue))} tracks")
-        run_tool = followed(
-            run, stream, logs / f"split-{make_batch_id(now(), rip.folder)}.out"
-        )
-        try:
-            result = split_rip(rip, inbox, holding, run_tool)
-        except SplitError as exc:
-            print(f"FAIL {label}: {exc}")
-            trace.fail(str(exc))
-            failed = True
-            continue
+        trace.start(f"{counts[rip.folder]} tracks")
+        log = progress_log(logs, make_batch_id(now(), rip.folder), "split")
+        run_tool = followed(run, stream, log)
+        with trace.guard():
+            try:
+                result = split_rip(rip, inbox, holding, run_tool)
+            except SplitError as exc:
+                print(f"FAIL {label}: {exc}")
+                trace.fail(str(exc))
+                failed = True
+                continue
         record(
             changes_log(env),
             "split",
@@ -553,7 +565,8 @@ def folders_command(
         logs_dir(env), now, "folders", f"{args.inbox.name},{args.holding.name}"
     )
     trace.start()
-    results = [create_plex_free_folder(folder) for folder, _ in plan]
+    with trace.guard():
+        results = [create_plex_free_folder(folder) for folder, _ in plan]
     created = [str(r.path) for r in results if r.made]
     ignores = [str(r.path / ".plexignore") for r in results if r.plexignore_written]
     if not created and not ignores:
@@ -618,8 +631,13 @@ def clean_appledouble(
         return 0
     trace = Trace(logs_dir(env), now, "clean-appledouble", str(root))
     trace.start(f"{len(found)} files")
-    result = delete_appledouble(found)
-    trace.done(f"deleted {len(result.deleted)}, failed {len(result.failed)}")
+    with trace.guard():
+        result = delete_appledouble(found)
+    counts = f"deleted {len(result.deleted)}, failed {len(result.failed)}"
+    if result.failed:
+        trace.fail(counts)
+    else:
+        trace.done(counts)
     print(f"deleted {len(result.deleted)} AppleDouble files ({result.bytes} bytes)")
     for path, reason in result.failed[:10]:
         print(f"FAIL {path.name}: {reason}")
@@ -721,7 +739,7 @@ def main(
     argv: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
     run: Run = run_command,
-    now: Callable[[], datetime] = datetime.now,
+    now: Clock = datetime.now,
     which: Callable[[str], str | None] = shutil.which,
     env_file: Path = ENV_FILE,
     http: Get = http_get,

@@ -1,7 +1,8 @@
 """Change log: one JSON line per action that changed files or tags.
 
 `beetsdir/logs/changes.jsonl` records what changed, with enough detail to
-find the old state. `musicos-activity.log` records only that a run happened.
+find the old state. `musicos-activity.log` records what ran and when: one
+line per event.
 """
 
 from __future__ import annotations
@@ -11,7 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from musicos.text import printable
+
 Entry = dict[str, Any]
+
+ACTIVITY_LOG = "musicos-activity.log"
+CHANGES_LOG = "changes.jsonl"
+
+
+def append_activity(logs: Path, line: str) -> None:
+    logs.mkdir(parents=True, exist_ok=True)
+    with (logs / ACTIVITY_LOG).open("a") as log:
+        log.write(printable(line) + "\n")
 
 
 def record(path: Path, action: str, when: datetime, **fields: Any) -> None:
@@ -27,7 +39,7 @@ def read_entries(path: Path) -> list[Entry]:
     if not path.exists():
         return []
     entries: list[Entry] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
         if not line.strip():
             continue
         try:

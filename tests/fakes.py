@@ -1,7 +1,8 @@
 """Fake external tools shared by tests."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,3 +76,9 @@ def on_another_device(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
         return os.stat_result(fields)
 
     monkeypatch.setattr(os, "stat", fake_stat)
+
+
+def clock(*times: datetime) -> Callable[[], datetime]:
+    """A clock that returns each given time once, in order."""
+    ticks = iter(times)
+    return lambda: next(ticks)

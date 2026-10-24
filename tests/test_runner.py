@@ -66,3 +66,21 @@ def test_stream_command_appends_to_an_existing_log(tmp_path: Path) -> None:
 
     assert log.read_text().startswith("earlier\n")
     assert log.read_text().endswith("later\n")
+
+
+def test_stream_command_survives_output_that_is_not_utf8(tmp_path: Path) -> None:
+    log = tmp_path / "split.out"
+    code = "import sys; sys.stdout.buffer.write(b'caf\\xe9\\n'); sys.stdout.flush()"
+
+    out = stream_command([PY, "-c", code], log)
+
+    assert out.code == 0
+    assert log.read_text(encoding="utf-8").splitlines()[1] == "caf�"
+
+
+def test_stream_command_reports_the_last_line_that_is_not_blank(tmp_path: Path) -> None:
+    code = "import sys; print('error: no space'); print(); sys.exit(1)"
+
+    out = stream_command([PY, "-c", code], tmp_path / "import.out")
+
+    assert first_error(out) == "error: no space"

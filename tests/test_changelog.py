@@ -100,3 +100,16 @@ def test_no_filters_returns_everything() -> None:
 
 def test_filter_last_zero_keeps_nothing() -> None:
     assert filter_entries(ENTRIES, last=0) == []
+
+
+def test_a_unicode_line_separator_in_a_field_does_not_split_the_entry(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "changes.jsonl"
+    record(log, "failed", WHEN, error="a\u2028b\u0085c")
+    record(log, "split", WHEN)
+
+    entries = read_entries(log)
+
+    assert [e["action"] for e in entries] == ["failed", "split"]
+    assert entries[0]["error"] == "a\u2028b\u0085c"

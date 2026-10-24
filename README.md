@@ -86,7 +86,7 @@ All in `beetsdir/logs/` (gitignored).
 
 `uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.
 
-A command that stops after it may have changed files appends a `failed` entry: `command`, `subject`, `error`.
+A command that stops with an error appends a `failed` entry: `command`, `subject`, `error`, and `batch` for an import. An error that nobody expected, such as a full disk or Ctrl-C, is logged the same way before it stops the command.
 
 `changes.jsonl` holds one entry for each change a command makes: `split`, `ingest`, `folders --apply`, `clean-appledouble --apply` and `plex refresh`. An import entry holds the batch, the source folder (only for `ingest --unattended`), the album and flagged counts, and the path of every imported item. A split entry holds the source and the track count. Each command added later that changes files must append its own entries.
 
