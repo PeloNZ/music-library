@@ -2,6 +2,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from musicos.ingest import (
     dry_run_command,
     has_audio,
@@ -111,3 +113,11 @@ def test_has_audio_ignores_art_and_logs(tmp_path: Path) -> None:
     (tmp_path / "album.cue").write_text("")
 
     assert not has_audio(tmp_path)
+
+
+def test_a_failing_export_is_an_error_not_an_empty_batch() -> None:
+    def run(cmd: list[str]) -> Output:
+        return Output("", "error: no such field\n", 1)
+
+    with pytest.raises(RuntimeError, match="no such field"):
+        summarize_batch(run, BATCH)

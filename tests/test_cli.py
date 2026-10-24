@@ -375,3 +375,24 @@ def test_log_fails_when_beetsdir_is_unset(
 
     assert code == 1
     assert "FAIL beetsdir" in capsys.readouterr().out
+
+
+def test_summary_reports_a_failing_export_and_logs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class BrokenExport(Recorder):
+        def __call__(self, cmd: list[str]) -> Output:
+            if cmd[:2] == ["beet", "export"]:
+                return Output("", "error: no such field\n", 1)
+            return super().__call__(cmd)
+
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["summary", "b1"], env=make_beetsdir(beets), run=BrokenExport(), now=lambda: NOW
+    )
+
+    assert code == 1
+    assert "FAIL summary: error: no such field" in capsys.readouterr().out
+    assert not (beets / "logs").exists()

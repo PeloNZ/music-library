@@ -83,7 +83,11 @@ def log_activity(env: Mapping[str, str], line: str) -> None:
 
 
 def report_batch(env: Mapping[str, str], run: Run, batch: str, when: datetime) -> int:
-    summary = summarize_batch(run, batch)
+    try:
+        summary = summarize_batch(run, batch)
+    except RuntimeError as exc:
+        print(f"FAIL summary: {exc}")
+        return 1
     flagged = len(summary.flagged)
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:

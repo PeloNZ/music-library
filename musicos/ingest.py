@@ -71,6 +71,9 @@ def summarize_batch(run: Run, batch: str) -> BatchSummary:
             f"musicos_batch:{batch}",
         ]
     )
+    if out.code != 0:
+        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
+        raise RuntimeError(message[0])
     albums = json.loads(out.stdout) if out.stdout.strip() else []
     return BatchSummary(len(albums), [a for a in albums if not a.get("mb_albumid")])
 
