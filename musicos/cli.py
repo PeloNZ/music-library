@@ -17,6 +17,15 @@ import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.changelog import filter_entries, format_entry, read_entries, record
+from musicos.dupes import (
+    TagReader,
+    audio_folders,
+    describe,
+    find_duplicates,
+    read_tags,
+)
+from musicos.dupes import activity_line as dupes_activity_line
+from musicos.dupes import render_report as render_dupes_report
 from musicos.envfile import merged_env
 from musicos.folders import (
     FolderError,
@@ -469,6 +478,26 @@ def clean_appledouble(
     return 1 if result.failed else 0
 
 
+def dupes(
+    env: Mapping[str, str], args: argparse.Namespace, when: datetime, read: TagReader
+) -> int:
+    root: Path = args.root.resolve()
+    if not root.is_dir():
+        print(f"FAIL root: {root} is not a folder")
+        return 1
+    if not print_results_if_failed([check_beetsdir(env)]):
+        return 1  # the report is written under BEETSDIR
+    releases = [describe(folder, read) for folder in audio_folders(root)]
+    groups = find_duplicates(releases)
+    report = render_dupes_report(groups, len(releases), root, when)
+    logs = Path(env["BEETSDIR"]) / "logs"
+    logs.mkdir(exist_ok=True)
+    (logs / "last-duplicates-report.md").write_text(report)
+    log_activity(env, dupes_activity_line(groups, len(releases), when))
+    print(report, end="")
+    return 0
+
+
 def print_results_if_failed(results: list[Result]) -> bool:
     """Print only failures. True when every result passed."""
     failed = [r for r in results if not r.ok]
@@ -485,6 +514,7 @@ def main(
     which: Callable[[str], str | None] = shutil.which,
     env_file: Path = ENV_FILE,
     http: Get = http_get,
+    tag_reader: TagReader = read_tags,
 ) -> int:
     if env is None:
         try:
@@ -550,6 +580,12 @@ def main(
     clean_parser.add_argument(
         "--apply", action="store_true", help="delete them (default is a dry run)"
     )
+    dupes_parser = commands.add_parser(
+        "dupes", help="report the same album in more than one folder (read-only)"
+    )
+    dupes_parser.add_argument(
+        "root", type=Path, help="folder to scan, such as an artist"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -566,6 +602,8 @@ def main(
         return folders_command(env, args, now(), http)
     if args.command == "clean-appledouble":
         return clean_appledouble(env, args, now())
+    if args.command == "dupes":
+        return dupes(env, args, now(), tag_reader)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":

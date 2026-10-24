@@ -7,6 +7,7 @@ import pytest
 
 from musicos.changelog import read_entries, record
 from musicos.cli import main
+from musicos.dupes import Tags
 from musicos.plex import Response
 from musicos.runner import Output, Run
 from tests.fakes import FakeHttp, Tools
@@ -1472,3 +1473,113 @@ def test_split_dry_run_already_refuses_folders_on_different_shares(
     assert code == 1
     assert "FAIL shares: " in out and "one share" in out
     assert "Deserted (3 tracks)" not in out
+
+
+def isis_library(root: Path) -> Path:
+    """Celestial twice (a cue rip and a track-by-track copy) and Oceanic once."""
+    rip = root / "Isis - Celestial (2000) [EAC-FLAC]"
+    rip.mkdir(parents=True)
+    (rip / "rip.flac").write_bytes(b"x" * 10)
+    (rip / "rip.cue").write_text(
+        'PERFORMER "Isis"\nTITLE "Celestial"\n  TRACK 01 AUDIO\n  TRACK 02 AUDIO\n'
+    )
+    copy = root / "Discography" / "(2000) Celestial"
+    copy.mkdir(parents=True)
+    for n in (1, 2):
+        (copy / f"0{n}.flac").write_bytes(b"x" * 5)
+    oceanic = root / "Oceanic"
+    oceanic.mkdir()
+    (oceanic / "01.flac").write_bytes(b"x")
+    return root
+
+
+def isis_tags(path: Path) -> Tags | None:
+    album = "Oceanic" if path.parent.name == "Oceanic" else "Celestial"
+    return Tags(album, "Isis", "2000", "1", 600.0, "FLAC 16/44.1")
+
+
+def test_dupes_prints_the_report_and_writes_the_file_and_one_log_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["dupes", str(root)],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "## Isis - Celestial (disc 1)" in out
+    assert (
+        "| Isis - Celestial (2000) [EAC-FLAC] | 2 | 10.0 | FLAC 16/44.1 | 0 MiB | cue rip |"
+        in out
+    )
+    assert "Oceanic" not in out.split("## ", 1)[1]  # Oceanic is not in a group
+    assert (beets / "logs" / "last-duplicates-report.md").read_text() == out
+    log = (beets / "logs" / "musicos-activity.log").read_text()
+    assert (
+        log
+        == "2026-10-24 21:30:05 dupes 3 folders checked, 1 groups, 2 folders in groups\n"
+    )
+    assert not (beets / "logs" / "changes.jsonl").exists()
+
+
+def test_dupes_changes_nothing_in_the_folder(tmp_path: Path) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    before = sorted(p.name for p in root.rglob("*"))
+
+    main(
+        ["dupes", str(root)],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+
+    assert sorted(p.name for p in root.rglob("*")) == before
+
+
+def test_dupes_says_when_there_are_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "Isis"
+    (root / "Oceanic").mkdir(parents=True)
+    (root / "Oceanic" / "01.flac").write_bytes(b"x")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    code = main(
+        ["dupes", str(root)],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+
+    assert code == 0
+    assert "No duplicate albums found." in capsys.readouterr().out
+
+
+def test_dupes_stops_when_the_root_is_not_a_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["dupes", str(tmp_path / "missing")], env={}, tag_reader=isis_tags)
+
+    assert code == 1
+    assert "FAIL root: " in capsys.readouterr().out
+
+
+def test_dupes_needs_beetsdir_for_its_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+
+    code = main(["dupes", str(root)], env={}, tag_reader=isis_tags)
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out
