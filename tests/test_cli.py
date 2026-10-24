@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from musicos.cli import Output, main
+from musicos.cli import main
+from musicos.runner import Output
 
 MOUNTS = "//chrisw@192.168.0.63/music on /Volumes/music (smbfs, nodev)\n"
 VERSION = "beets version 2.14.1\nplugins: chroma, missing\n"

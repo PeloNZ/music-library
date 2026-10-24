@@ -4,30 +4,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import yaml
 
 from musicos.preflight import Result, check_beetsdir, check_mount, check_plugins
-
-
-@dataclass(frozen=True)
-class Output:
-    stdout: str
-    stderr: str
-    code: int
-
-
-Run = Callable[[list[str]], Output]
-
-
-def run_command(cmd: list[str]) -> Output:
-    done = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return Output(done.stdout, done.stderr, done.returncode)
+from musicos.runner import Run, run_command
 
 
 def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
