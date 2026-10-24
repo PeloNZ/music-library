@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import os
 import re
-from collections import Counter
+import unicodedata
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from musicos.ingest import AUDIO_SUFFIXES
@@ -117,4 +119,107 @@ def describe(folder: Path, read_tags: TagReader) -> Release:
         size=sum(p.stat().st_size for p in files),
         cue=is_rip,
         unreadable=len(files) - len(tags),
+    )
+
+
+def normalize(name: str) -> str:
+    """A name for comparing: no case, accents, punctuation or bracketed notes
+    such as `(Reissue 2016)`, and no leading `The`. A name made only of a
+    bracket keeps its words."""
+    ascii_name = (
+        unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    )
+    stripped = re.sub(r"\([^)]*\)|\[[^\]]*\]|\{[^}]*\}", " ", ascii_name)
+    text = stripped if re.search(r"[a-z0-9]", stripped) else ascii_name
+    words = re.sub(r"[^a-z0-9]+", " ", text).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    return " ".join(words)
+
+
+def _album_key(release: Release) -> tuple[str, str]:
+    """The album name, from the tags or else from the folder name, and the disc."""
+    name = release.album or re.sub(r"^\d{4}\s*-\s*", "", release.folder.name)
+    return normalize(name), release.disc
+
+
+def find_duplicates(releases: list[Release]) -> list[list[Release]]:
+    """Groups of two or more folders that look like the same album: the same
+    album name and disc, and the same artist. A folder with no artist tag
+    matches any artist. Groups are in artist and album order."""
+    by_album: dict[tuple[str, str], list[Release]] = defaultdict(list)
+    for release in releases:
+        by_album[_album_key(release)].append(release)
+    groups: list[list[Release]] = []
+    for members in by_album.values():
+        artists = sorted({normalize(m.artist) for m in members if m.artist})
+        if len(artists) <= 1:
+            candidates = [members]
+        else:
+            candidates = [
+                [m for m in members if not m.artist or normalize(m.artist) == a]
+                for a in artists
+            ]
+        groups += [group for group in candidates if len(group) >= 2]
+
+    def order(group: list[Release]) -> tuple[str, str]:
+        first = group[0]
+        return normalize(first.artist), _album_key(first)[0]
+
+    return sorted(groups, key=order)
+
+
+def _title(group: list[Release]) -> str:
+    artist = _most_common([r.artist for r in group], "?")
+    album = _most_common([r.album for r in group]) or group[0].folder.name
+    return f"{artist} - {album} (disc {group[0].disc})"
+
+
+def _row(release: Release, root: Path) -> str:
+    try:
+        folder = release.folder.relative_to(root)
+    except ValueError:
+        folder = release.folder
+    notes = ", ".join(
+        ["cue rip"] * release.cue
+        + ([f"{release.unreadable} unreadable"] if release.unreadable else [])
+    )
+    return (
+        f"| {folder} | {release.tracks} | {release.seconds / 60:.1f} "
+        f"| {release.fmt} | {release.size / 1048576:.0f} MiB | {notes} |"
+    )
+
+
+def _when(when: datetime) -> str:
+    return when.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def render_report(
+    groups: list[list[Release]], checked: int, root: Path, when: datetime
+) -> str:
+    plural = "group" if len(groups) == 1 else "groups"
+    summary = (
+        f"Run at {_when(when)}. {checked} folders checked under {root}. "
+        f"{len(groups)} {plural} found."
+    )
+    lines = ["# Duplicate albums", "", summary]
+    if not groups:
+        lines += ["", "No duplicate albums found."]
+    for group in groups:
+        lines += [
+            "",
+            f"## {_title(group)}",
+            "",
+            "| Folder | Tracks | Minutes | Format | Size | Notes |",
+            "|---|---|---|---|---|---|",
+        ]
+        lines += [_row(r, root) for r in group]
+    return "\n".join(lines) + "\n"
+
+
+def activity_line(groups: list[list[Release]], checked: int, when: datetime) -> str:
+    members = sum(len(g) for g in groups)
+    return (
+        f"{_when(when)} dupes {checked} folders checked, "
+        f"{len(groups)} groups, {members} folders in groups"
     )
