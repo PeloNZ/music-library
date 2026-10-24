@@ -28,7 +28,7 @@ Never run `beet import -q` with `quiet_fallback: asis`. It writes unverified tag
 
 ## After the import
 
-`summary` lists the albums in the batch and the ones with no MusicBrainz match, then adds one line to `beetsdir/logs/musicos-activity.log`.
+`summary` lists the albums in the batch and the ones with no MusicBrainz match. It adds one line to `beetsdir/logs/musicos-activity.log` and one `import` entry to `beetsdir/logs/changes.jsonl`, with the path of every imported item. Show the entry with `uv run musicos log --batch <batch>`.
 
 1. Report the counts and name each album with no match.
 2. Ask the user what to do with each one. Do not guess tags.

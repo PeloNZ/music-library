@@ -72,6 +72,20 @@ uv run mypy musicos
 
 Write the test first. Mock only the network, the clock, the file system and subprocess calls to `beet`.
 
+## Logs
+
+All in `beetsdir/logs/` (gitignored).
+
+| File | Contents |
+|---|---|
+| `changes.jsonl` | One JSON line per action that changed files or tags: `time`, `action`, then fields. Read it with `uv run musicos log`. |
+| `musicos-activity.log` | One text line per run of `lint`, `ingest` or `summary`: that it ran, with counts. |
+| `import-<batch>.log` | Written by `beet import -l`: albums beets skipped or imported as-is. |
+
+`uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.
+
+Today `changes.jsonl` records imports: batch, source folder (only for `ingest --unattended`), album and flagged counts, and the path of every imported item. Each command added later that changes files must append its own entries: old and new paths for a move, old and new values for a tag write, source and tracks for a split.
+
 ## Rules
 
 - Do not change the real library until the test copy passes.
@@ -79,6 +93,7 @@ Write the test first. Mock only the network, the clock, the file system and subp
 - Pass `-W` to `beet modify` when you change only the database.
 - Keep `import.copy: yes` until move mode is approved. Copy mode needs free space on the share equal to the size of each batch.
 - Write every import run to a log file.
+- Every command that changes files or tags appends to `changes.jsonl`.
 - Keep source FLAC and `.cue` files until the split tracks are confirmed correct.
 
 ## Status
@@ -88,5 +103,5 @@ Done: tools installed, dependencies in `.venv`, MusicOS skills and docs copied i
 Open:
 
 - The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
-- `musicos/` has four commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, six read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, source check, dry run, then the import command; unattended runs it) and `summary <batch>` (albums in an import batch, and those with no MusicBrainz match). All exit 1 on failure. Next: `gaps`, `split`, `plex-refresh`.
+- `musicos/` has five commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, six read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, source check, dry run, then the import command; unattended runs it), `summary <batch>` (albums in an import batch, and those with no MusicBrainz match) and `log` (shows the change log). All but `log` run preflight first; all exit 1 on failure. Next: `gaps`, `split`, `plex-refresh`, and move and tag-write commands that log their changes.
 - `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.
