@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from musicos.runner import Run
+from musicos.runner import Output, Run
 
 SLUG_LIMIT = 40
 
@@ -47,6 +47,12 @@ def import_command(source: Path, batch: str, logs: Path, unattended: bool) -> li
     return cmd + [str(source)]
 
 
+def _raise_on_failure(out: Output) -> None:
+    if out.code != 0:
+        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
+        raise RuntimeError(message[0])
+
+
 EXPORT_FIELDS = "id,album,albumartist,year,mb_albumid,albumtypes"
 
 
@@ -71,9 +77,7 @@ def summarize_batch(run: Run, batch: str) -> BatchSummary:
             f"musicos_batch:{batch}",
         ]
     )
-    if out.code != 0:
-        message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
-        raise RuntimeError(message[0])
+    _raise_on_failure(out)
     albums = json.loads(out.stdout) if out.stdout.strip() else []
     return BatchSummary(len(albums), [a for a in albums if not a.get("mb_albumid")])
 
@@ -85,3 +89,10 @@ AUDIO_SUFFIXES = {
 
 def has_audio(source: Path) -> bool:
     return any(p.suffix.lower() in AUDIO_SUFFIXES for p in source.rglob("*"))
+
+
+def batch_items(run: Run, batch: str) -> list[str]:
+    """The path of every item beets holds for an import batch."""
+    out = run(["beet", "ls", "-f", "$path", f"musicos_batch:{batch}"])
+    _raise_on_failure(out)
+    return [line for line in out.stdout.splitlines() if line.strip()]

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from musicos.changelog import record
+from musicos.changelog import read_entries, record
 from musicos.cli import main
 from musicos.runner import Output, Run
 
@@ -152,6 +152,8 @@ class Recorder:
             )
         if cmd[:2] == ["beet", "export"]:
             return Output(EXPORT, "", 0)
+        if cmd[:2] == ["beet", "ls"]:
+            return Output("/lib/Gatecreeper/01.flac\n/lib/Gatecreeper/02.flac\n", "", 0)
         return Output("", "", 0)
 
     def ran_import(self) -> bool:
@@ -396,3 +398,43 @@ def test_summary_reports_a_failing_export_and_logs_nothing(
     assert code == 1
     assert "FAIL summary: error: no such field" in capsys.readouterr().out
     assert not (beets / "logs").exists()
+
+
+def test_unattended_ingest_records_the_import_in_the_change_log(
+    tmp_path: Path,
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    source = make_source(tmp_path)
+
+    main(
+        ["ingest", str(source), "--unattended"],
+        env=make_beetsdir(beets),
+        run=Recorder(),
+        now=lambda: NOW,
+    )
+
+    entries = read_entries(beets / "logs" / "changes.jsonl")
+    assert entries == [
+        {
+            "time": "2026-10-24T21:30:05",
+            "action": "import",
+            "batch": "20261024-2130-deserted",
+            "source": str(source),
+            "albums": 1,
+            "flagged": 1,
+            "items": ["/lib/Gatecreeper/01.flac", "/lib/Gatecreeper/02.flac"],
+        }
+    ]
+
+
+def test_summary_records_the_import_without_a_source(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["batch"] == "b1"
+    assert "source" not in entry
+    assert len(entry["items"]) == 2

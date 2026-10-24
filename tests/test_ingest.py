@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from musicos.ingest import (
+    batch_items,
     dry_run_command,
     has_audio,
     import_command,
@@ -121,3 +122,22 @@ def test_a_failing_export_is_an_error_not_an_empty_batch() -> None:
 
     with pytest.raises(RuntimeError, match="no such field"):
         summarize_batch(run, BATCH)
+
+
+def test_batch_items_lists_the_paths_beets_holds_for_a_batch() -> None:
+    seen: list[list[str]] = []
+
+    def run(cmd: list[str]) -> Output:
+        seen.append(cmd)
+        return Output("/lib/a/01.flac\n\n/lib/a/02.flac\n", "", 0)
+
+    assert batch_items(run, BATCH) == ["/lib/a/01.flac", "/lib/a/02.flac"]
+    assert seen == [["beet", "ls", "-f", "$path", f"musicos_batch:{BATCH}"]]
+
+
+def test_batch_items_raises_when_beet_fails() -> None:
+    def run(cmd: list[str]) -> Output:
+        return Output("", "error: boom\n", 1)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        batch_items(run, BATCH)

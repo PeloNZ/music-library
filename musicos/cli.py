@@ -14,8 +14,9 @@ from typing import Any
 
 import yaml
 
-from musicos.changelog import filter_entries, format_entry, read_entries
+from musicos.changelog import filter_entries, format_entry, read_entries, record
 from musicos.ingest import (
+    batch_items,
     dry_run_command,
     has_audio,
     import_command,
@@ -82,9 +83,16 @@ def log_activity(env: Mapping[str, str], line: str) -> None:
         log.write(line + "\n")
 
 
-def report_batch(env: Mapping[str, str], run: Run, batch: str, when: datetime) -> int:
+def report_batch(
+    env: Mapping[str, str],
+    run: Run,
+    batch: str,
+    when: datetime,
+    source: Path | None = None,
+) -> int:
     try:
         summary = summarize_batch(run, batch)
+        items = batch_items(run, batch)
     except RuntimeError as exc:
         print(f"FAIL summary: {exc}")
         return 1
@@ -92,6 +100,18 @@ def report_batch(env: Mapping[str, str], run: Run, batch: str, when: datetime) -
     print(f"{batch}: {summary.albums} albums, {flagged} without a MusicBrainz match")
     for a in summary.flagged:
         print(f"  - {a.get('albumartist', '?')} - {a.get('album', '?')}")
+    fields: dict[str, Any] = {"batch": batch}
+    if source is not None:
+        fields["source"] = str(source)
+    record(
+        Path(env["BEETSDIR"]) / "logs" / "changes.jsonl",
+        "import",
+        when,
+        **fields,
+        albums=summary.albums,
+        flagged=flagged,
+        items=items,
+    )
     log_activity(
         env,
         f"{when:%Y-%m-%d %H:%M:%S} ingest {batch} {summary.albums} albums, {flagged} flagged",
@@ -120,7 +140,7 @@ def ingest(
         message = out.stderr.strip().splitlines()[:1] or [f"exit code {out.code}"]
         print(f"FAIL import: {message[0]}")
         return 1
-    return report_batch(env, run, batch, when)
+    return report_batch(env, run, batch, when, source)
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
