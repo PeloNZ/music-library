@@ -7,17 +7,27 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from musicos.preflight import Result, check_beetsdir, check_mount, check_plugins
 
-Run = Callable[[list[str]], str]
+
+@dataclass(frozen=True)
+class Output:
+    stdout: str
+    stderr: str
+    code: int
 
 
-def run_command(cmd: list[str]) -> str:
-    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+Run = Callable[[list[str]], Output]
+
+
+def run_command(cmd: list[str]) -> Output:
+    done = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return Output(done.stdout, done.stderr, done.returncode)
 
 
 def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
@@ -25,10 +35,15 @@ def preflight(env: Mapping[str, str], run: Run) -> list[Result]:
     if not results[0].ok:
         return results
     config = yaml.safe_load((Path(env["BEETSDIR"]) / "config.yaml").read_text())
-    results.append(check_mount(config["directory"], run(["mount"])))
+    results.append(check_mount(config["directory"], run(["mount"]).stdout))
     plugins = config.get("plugins", "")
     wanted = plugins.split() if isinstance(plugins, str) else list(plugins)
-    results.append(check_plugins(run(["beet", "version"]), wanted))
+    version = run(["beet", "version"])
+    if version.code != 0:
+        message = version.stderr.strip().splitlines()[:1] or ["beet version failed"]
+        results.append(Result("beet", False, message[0]))
+        return results
+    results.append(check_plugins(version.stdout, wanted))
     return results
 
 
