@@ -1,7 +1,11 @@
+from collections.abc import Mapping
+
 import pytest
 
 from musicos.plex import (
+    Plex,
     PlexError,
+    Response,
     Section,
     choose_section,
     music_sections,
@@ -58,3 +62,76 @@ def test_choose_section_with_no_music_library_says_so() -> None:
 def test_choose_section_with_an_unknown_name_lists_the_choices() -> None:
     with pytest.raises(PlexError, match=r"no library 'Jazz'.*Music \(3\)"):
         choose_section([MUSIC, LIVE], "Jazz")
+
+
+URL = "http://192.168.0.63:32400"
+TOKEN = "s3cr3t-token"
+
+
+class FakeHttp:
+    """Records each request and answers with a fixed response or error."""
+
+    def __init__(self, response: Response | None = None, error: OSError | None = None):
+        self.response = response or Response(200, "")
+        self.error = error
+        self.requests: list[tuple[str, dict[str, str]]] = []
+
+    def __call__(self, url: str, headers: Mapping[str, str]) -> Response:
+        self.requests.append((url, dict(headers)))
+        if self.error:
+            raise self.error
+        return self.response
+
+
+def test_sections_asks_for_json_and_sends_the_token_in_a_header() -> None:
+    http = FakeHttp(Response(200, SECTIONS_JSON))
+
+    sections = Plex(URL, TOKEN, http).sections()
+
+    assert sections == [MOVIES, MUSIC, LIVE]
+    ((url, headers),) = http.requests
+    assert url == f"{URL}/library/sections"
+    assert headers["X-Plex-Token"] == TOKEN
+    assert headers["Accept"] == "application/json"
+    assert TOKEN not in url
+
+
+def test_a_trailing_slash_on_the_url_is_ignored() -> None:
+    http = FakeHttp(Response(200, SECTIONS_JSON))
+
+    Plex(URL + "/", TOKEN, http).sections()
+
+    assert http.requests[0][0] == f"{URL}/library/sections"
+
+
+def test_refresh_requests_the_section_refresh_endpoint() -> None:
+    http = FakeHttp()
+
+    Plex(URL, TOKEN, http).refresh("5")
+
+    ((url, headers),) = http.requests
+    assert url == f"{URL}/library/sections/5/refresh"
+    assert headers["X-Plex-Token"] == TOKEN
+
+
+def test_a_rejected_token_is_reported_without_the_token() -> None:
+    with pytest.raises(PlexError, match="rejected the token") as error:
+        Plex(URL, TOKEN, FakeHttp(Response(401, ""))).sections()
+
+    assert TOKEN not in str(error.value)
+
+
+def test_another_error_status_is_reported_with_its_code() -> None:
+    with pytest.raises(PlexError, match="500"):
+        Plex(URL, TOKEN, FakeHttp(Response(500, ""))).refresh("5")
+
+
+def test_an_unreachable_server_is_reported_with_its_address() -> None:
+    http = FakeHttp(error=OSError("Connection refused"))
+
+    with pytest.raises(
+        PlexError, match=r"cannot reach http://192\.168\.0\.63:32400"
+    ) as error:
+        Plex(URL, TOKEN, http).sections()
+
+    assert TOKEN not in str(error.value)
