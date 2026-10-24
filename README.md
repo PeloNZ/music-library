@@ -80,7 +80,7 @@ All in `beetsdir/logs/` (gitignored).
 |---|---|
 | `changes.jsonl` | One JSON line per action that changed files or tags: `time`, `action`, then fields. Read it with `uv run musicos log`. |
 | `musicos-activity.log` | One text line per run of `lint`, `ingest` or `summary`: that it ran, with counts. |
-| `import-<batch>.log` | Written by `beet import -l`: albums beets skipped or imported as-is. |
+| `import-<batch>.log` | Written by `beet import -l`: albums beets skipped or imported as-is. `import-<batch>-retry.log` holds the decisions on the skipped albums. |
 
 `uv run musicos log` options: `--batch ID`, `--action NAME`, `--since YYYY-MM-DD`, `--last N`, `--json` (raw entries). It needs `BEETSDIR` but not the mounted share.
 
@@ -110,11 +110,26 @@ Each log entry has a status read from the disk: `open`, `stale` (every copy that
 One artist folder is one batch. Deleting is the last step.
 
 1. `dupes`: find the groups and record the candidates.
-2. The user picks a copy for each tie or review.
+2. The user picks a copy for each tie or review. Recording an open candidate in the log is the pick.
 3. `split` each kept cue rip. A cue rip that is a candidate is not split.
-4. `ingest`: import the kept copies, then the Plex rescan, `summary` and `lint`.
-5. The user checks the result in Plex.
-6. The user deletes the candidates by hand. Nothing is deleted before step 5.
+4. `batch <artist-folder> --apply`: one unattended import of every kept album, then the Plex rescan and `summary`. Then `lint`.
+5. The user decides the albums beets skipped, with the command that `summary` prints.
+6. The user checks the result in Plex.
+7. The user deletes the candidates by hand. Nothing is deleted before step 6.
+
+`uv run musicos batch <artist-folder>` is a dry run. It decides from the disk and the candidates log:
+
+| Folder | Result |
+|---|---|
+| Not in a group | imported |
+| Open deletion candidate | left out, never touched |
+| Stale candidate, or a FLAC with several cue sheets | left out: review |
+| One copy left in a group | that copy is imported |
+| Several copies left in a group | none imported: choose one, then run again |
+| A kept FLAC + cue rip | left out: split it first |
+| Beets already holds the folder | left out |
+
+It prints the folders, the size that copy mode adds, and the `beet import --pretend` list. `--apply` runs one `beet import -i -R -q --quiet-fallback skip`. Strong matches apply. A weak match is skipped and logged, never guessed. `-i` skips a folder beets imported before, and `-R` retries a skipped one, so running `batch` again after you fix a decision imports only what is left.
 
 ## Rules
 

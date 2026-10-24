@@ -35,7 +35,7 @@ Priority, highest first:
 2. Report the groups, the candidates with their size, the ties and the reviews.
 3. For a tie or a review, ask the user which copy to keep. Do not guess.
 4. Do not delete, move or rename a candidate. Deleting is the last step of the batch: after `split`, `ingest`, the Plex rescan and the user's check of the result. Do not ask the user to delete before then. The user removes candidates by hand. A candidate whose folder is gone shows as done and is hidden. A candidate marked `stale` lost every copy that outranked it. Tell the user not to delete it. A candidate marked `unknown` is on a share that is not mounted. Ask the user to mount it and run `candidates` again.
-5. Run `dupes` before `split`: do not split a cue rip that is a candidate. The batch order is `dupes`, choices, `split`, `ingest`, the user's check, then deletion.
+5. Run `dupes` before `split`: do not split a cue rip that is a candidate. The batch order is `dupes`, choices, `split`, `batch --apply`, the user's check, then deletion.
 
 ## Notes
 

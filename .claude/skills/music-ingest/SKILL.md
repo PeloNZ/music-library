@@ -19,6 +19,14 @@ The command:
 4. Runs `beet import --pretend` and prints the file list. It shows files, not matches.
 5. Prints the exact `beet import` command. Every import is logged to `beetsdir/logs/import-<batch>.log` and tagged `musicos_batch=<batch>`.
 
+## One artist folder: use `batch`
+
+For an artist folder with several albums, run `uv run musicos batch <artist-folder>` first. It picks the kept albums and imports them in one run. See "Order of a batch" in the README. `ingest` stays for a single folder, such as a new download.
+
+- Without `--apply` it only previews. With `--apply` it imports unattended, rescans Plex and runs `summary`.
+- It never imports an open deletion candidate, a group with several copies left, or a kept cue rip. It lists each and says what to do.
+- `summary` prints one `beet import` command for the albums beets skipped. The user runs it in their own terminal and answers the prompts.
+
 ## Choose a mode with the user
 
 - **Assisted (default).** The user runs the printed command in their own terminal. beets' match prompts need a terminal and do not work through Claude's shell. Then run `uv run musicos summary <batch>`.
