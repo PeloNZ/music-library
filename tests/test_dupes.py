@@ -219,6 +219,31 @@ def test_a_folder_with_no_album_tag_is_grouped_by_its_name() -> None:
     assert find_duplicates([tagged, untagged]) == [[tagged, untagged]]
 
 
+def test_a_folder_with_no_artist_is_in_no_group_when_several_artists_share_the_album() -> (
+    None
+):
+    queen = [rel(f"/lib/q{n}", album="Greatest Hits", artist="Queen") for n in (1, 2)]
+    abba = [rel(f"/lib/a{n}", album="Greatest Hits", artist="ABBA") for n in (1, 2)]
+    unknown = rel("/lib/x", album="Greatest Hits", artist="")
+
+    groups = find_duplicates([*queen, *abba, unknown])
+
+    assert groups == [abba, queen]
+
+
+def test_folders_with_no_artist_group_with_each_other_when_several_artists_share_the_album() -> (
+    None
+):
+    queen = [rel(f"/lib/q{n}", album="Greatest Hits", artist="Queen") for n in (1, 2)]
+    abba = [rel(f"/lib/a{n}", album="Greatest Hits", artist="ABBA") for n in (1, 2)]
+    unknown = [rel(f"/lib/x{n}", album="Greatest Hits", artist="") for n in (1, 2)]
+
+    groups = find_duplicates([*queen, *abba, *unknown])
+
+    assert unknown in groups
+    assert len(groups) == 3
+
+
 def test_groups_come_out_in_artist_and_album_order() -> None:
     z = [rel("/z1", album="Zed", artist="Isis"), rel("/z2", album="Zed", artist="Isis")]
     a = [

@@ -142,7 +142,9 @@ def _album_key(release: Release) -> tuple[str, str]:
 def find_duplicates(releases: list[Release]) -> list[list[Release]]:
     """Groups of two or more folders that look like the same album: the same
     album name and disc, and the same artist. A folder with no artist tag
-    matches any artist. Groups are in artist and album order."""
+    matches the artist when only one artist has the album. When several do, it
+    groups only with other folders that have no artist. Groups are in artist and
+    album order."""
     by_album: dict[tuple[str, str], list[Release]] = defaultdict(list)
     for release in releases:
         by_album[_album_key(release)].append(release)
@@ -153,9 +155,9 @@ def find_duplicates(releases: list[Release]) -> list[list[Release]]:
             candidates = [members]
         else:
             candidates = [
-                [m for m in members if not m.artist or normalize(m.artist) == a]
+                [m for m in members if m.artist and normalize(m.artist) == a]
                 for a in artists
-            ]
+            ] + [[m for m in members if not m.artist]]
         groups += [group for group in candidates if len(group) >= 2]
 
     def order(group: list[Release]) -> tuple[str, str]:
