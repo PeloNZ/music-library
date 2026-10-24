@@ -50,6 +50,13 @@ ignore:
   - Thumbs.db
   - sync.ffs_db
 
+# `beet unimported` lists files under directory: that beets does not hold.
+# Album art from fetchart is not an item, and the inbox and holding folders
+# live next to the library.
+unimported:
+  ignore_extensions: jpg jpeg png
+  ignore_subdirectories: _inbox _holding
+
 # --------------- Machine-readable output ---------------
 # Pins export formatting so the musicos commands parse consistently. See
 # docs/BEETS-CHEATSHEET.md's export-formatting gotchas.
