@@ -90,5 +90,4 @@ Open:
 
 - The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), a `Peter Bjorn &amp; John` folder, `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
 - `musicos/` has one command: `preflight` (checks `BEETSDIR`, the share mount and the enabled plugins; exit 1 on any failure). Next: `lint`, `ingest`, `gaps`, `split`, `plex-refresh`.
-- `beetsdir/config.example.yaml` still has the MusicOS letter layout. Change it to Artist/Album.
-- The skills still describe MusicOS steps by hand. Each moves to a script as that script lands.
+- `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.

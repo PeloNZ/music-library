@@ -1,64 +1,78 @@
-# MusicOS beets config template.
+# beets config template.
 #
 # Copy this file to config.yaml (in the same beetsdir/ folder) and fill in
-# the values marked CHANGE-ME below. See docs/SETUP.md for the full
-# walkthrough and docs/LIBRARY-LAYOUT.md for why the paths: section below
-# looks the way it does — it's plain beets config, no plugin involved.
+# the values marked CHANGE-ME below. config.yaml is gitignored: put the
+# AcoustID key there, never in this file.
+# See docs/LIBRARY-LAYOUT.md for the paths: section below.
 
 # --------------- Where things live ---------------
 
-# CHANGE-ME: the external folder where music files actually live.
-# Never point this inside MusicOS/ — see CLAUDE.md's invariants.
-directory: CHANGE-ME/path/to/your/music/library
+# The NAS share, mounted on this Mac. `musicos preflight` stops a run when
+# nothing is mounted here.
+directory: /Volumes/music
 
 # Relative paths resolve inside BEETSDIR (this file's own directory).
 library: library.db
 
 # --------------- Plugins ---------------
-# Zero-extra-dependency set for v1 — see docs/BEETS-CHEATSHEET.md.
-# fetchart/lastgenre (used by music-curate) are NOT listed here: they need
-# extra pip packages that aren't installed by default. Add them only after
-# reinstalling beets with those extras (see docs/SETUP.md) — enabling a
-# plugin here without its dependency installed stops beets from starting.
-plugins: export types missing duplicates unimported limit musicbrainz smartplaylist
+# The beets extras (chroma, embedart, fetchart, lastgenre) install with
+# `uv sync`. `inline` defines the multidisc field used in paths: below.
+plugins: >-
+  export types missing duplicates unimported musicbrainz smartplaylist
+  inline chroma fetchart embedart lastgenre info
+
+# CHANGE-ME: free key from https://acoustid.org
+acoustid:
+  apikey: CHANGE-ME
 
 # --------------- On-disk layout ---------------
+# Artist/Album, with the disc number only on multi-disc albums:
+#   Opeth/2001 - Blackwater Park/03 The Drapery Falls
+#   Opeth/2001 - Blackwater Park/02-03 The Drapery Falls
 # Keys other than 'default' are beets queries, tried in the order they
-# appear here — first match wins, 'default' is always the final fallback
-# regardless of where it's written. See docs/LIBRARY-LAYOUT.md.
+# appear here. First match wins. 'default' is the final fallback.
+
+item_fields:
+  multidisc: 1 if disctotal > 1 else 0
 
 paths:
-  singleton: "%upper{%left{$artist,1}}/$artist/Non-Album/$title"
-  albumtype:soundtrack: Soundtracks/$album%aunique{}/$track $title
-  comp: Various Artists/$album%aunique{}/$track $title
-  albumartist::^[0-9]: "#/$albumartist/$album%aunique{}/$track $title"
-  # Quoted because it starts with '%', which YAML would otherwise treat as
-  # a reserved directive indicator.
-  default: "%upper{%left{$albumartist,1}}/$albumartist/$album%aunique{}/$track $title"
+  singleton: $artist/Non-Album/$title
+  comp: Various Artists/$album%aunique{}/%if{$multidisc,$disc-}$track $title
+  default: $albumartist/$year - $album%aunique{}/%if{$multidisc,$disc-}$track $title
+
+# Files beets skips. This list replaces the beets default, so the default
+# entries stay.
+ignore:
+  - ".*"
+  - "*~"
+  - System Volume Information
+  - lost+found
+  - desktop.ini
+  - Thumbs.db
+  - sync.ffs_db
 
 # --------------- Machine-readable output ---------------
-# Pins export formatting so music-query/music-organize/music-lint parse
-# consistently — see docs/BEETS-CHEATSHEET.md's export-formatting gotchas.
+# Pins export formatting so the musicos commands parse consistently. See
+# docs/BEETS-CHEATSHEET.md's export-formatting gotchas.
 
 time_format: '%Y-%m-%d %H:%M:%S'
 format_raw_length: yes
 
 # --------------- Playlists (music-playlist) ---------------
-# auto: no is deliberate — MusicOS regenerates playlists explicitly via the
-# music-playlist skill, not silently on every database change.
+# auto: no is deliberate: playlists regenerate when asked, not on every
+# database change.
 
 smartplaylist:
   auto: no
   playlist_dir: CHANGE-ME/path/to/where/your/player/reads/playlists
-  relative_to: CHANGE-ME/path/to/your/music/library   # should match directory: above
+  relative_to: /Volumes/music   # should match directory: above
   playlists: []
     # - name: 'Jazz.m3u'
     #   query: 'genre:jazz'
 
 # --------------- Import behavior ---------------
-# Defaults are sane; music-ingest overrides per-invocation as needed
-# (--pretend, --set, -q --quiet-fallback skip). Nothing to change here
-# unless you have a strong preference.
+# copy: yes keeps the original file. Switch to move only after approval.
+# Each import run also gets a log: -l beetsdir/logs/import-<batch>.log
 
 import:
   copy: yes
