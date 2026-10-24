@@ -8,7 +8,7 @@ Repair a music library with [beets](https://beets.io/), driven from Claude Code,
 - Organise files on disk as `Album Artist/Year - Album/NN Title`.
 - Tell Plex to rescan after a change.
 
-The library lives on a NAS share, mounted on this Mac at `/Volumes/music`. beets runs on this Mac. Plex runs on the NAS.
+The library lives on the NAS, which this Mac reaches through the `media` share, mounted at `/Volumes/media`. The library folder is `/Volumes/media/jbod2/media/music`, and the inbox and holding folders are next to it. Use that one share only, never the separate `music` share: every move is then a rename and nothing is copied between shares. beets runs on this Mac. Plex runs on the NAS.
 
 Built on [MusicOS](https://github.com/fernandohermida/MusicOS) by Fernando Hermida (MIT). The skills, docs and `scripts/library_snapshot.py` come from it. See `LICENSE`.
 
@@ -49,11 +49,11 @@ Always set `BEETSDIR`. Without it, beets writes its config and database to `~/.c
 
 Edit `beetsdir/config.yaml`:
 
-- `directory: /Volumes/music`
+- `directory: /Volumes/media/jbod2/media/music`
 
-Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/music`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/music`.
+Mount the share: Finder → Go → Connect to Server → `smb://192.168.0.63/media`. The terminal app needs access to network volumes: System Settings → Privacy & Security → Files and Folders (or Full Disk Access). Check with `ls /Volumes/music`.
 
-The `plex` commands read `PLEX_URL` and `PLEX_TOKEN`. Plex here has two music-type libraries (`Music` and `Audiobook`), so also set `PLEX_SECTION=Music` or pass `--section`. `folders` and the post-import rescan need a path map from each Mac mount to its server path: `PLEX_PATH_MAP=/Volumes/media=/data,/Volumes/music=/data/jbod2/media/music` (comma-separated). Put them in an env file at the repo root, one `KEY=value` per line (`#` comments and an `export ` prefix are allowed). The file is gitignored. `musicos` loads it on every run, and a variable already set in the shell wins. A bad line stops the run and names only its line number. Never commit the token.
+The `plex` commands read `PLEX_URL` and `PLEX_TOKEN`. Plex here has two music-type libraries (`Music` and `Audiobook`), so also set `PLEX_SECTION=Music` or pass `--section`. `folders` and the post-import rescan need a path map from each Mac mount to its server path: `PLEX_PATH_MAP=/Volumes/media=/data`. Put them in an env file at the repo root, one `KEY=value` per line (`#` comments and an `export ` prefix are allowed). The file is gitignored. `musicos` loads it on every run, and a variable already set in the shell wins. A bad line stops the run and names only its line number. Never commit the token.
 
 Check the tools:
 
@@ -94,6 +94,7 @@ Today `changes.jsonl` records imports: batch, source folder (only for `ingest --
 - Keep `import.copy: yes` until move mode is approved. Copy mode needs free space on the share equal to the size of each batch.
 - Write every import run to a log file.
 - Every command that changes files or tags appends to `changes.jsonl`.
+- Never copy between shares. `split` refuses unless the source, the inbox and the holding folder are on one share, and it moves by rename.
 - Keep source FLAC and `.cue` files until the split tracks are confirmed correct.
 
 ## Status
@@ -102,6 +103,6 @@ Done: tools installed, dependencies in `.venv`, MusicOS skills and docs copied i
 
 Open:
 
-- The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
-- `musicos/` has nine commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, read-only health checks, a report and a log line), `ingest <folder> [--unattended] [--no-plex-refresh]` (preflight, source check, dry run, then the import command; unattended runs it), `gaps` (preflight, then a report of albums with no album artist, year, genre or art, with name and path; guesses nothing), `summary <batch>` (albums in an import batch, those with no MusicBrainz match, and those the importer skipped), `split <folder> --inbox DIR --holding DIR [--apply]` (finds FLAC + cue rips; dry run unless `--apply`), `plex sections` (lists Plex libraries and their folders) and `plex refresh [--section ID|TITLE]` (rescans a music library; needs `BEETSDIR` to log it), `folders --inbox DIR --holding DIR [--path-map MAC=SERVER] [--apply]` (makes inbox and holding folders that Plex ignores; dry run unless `--apply`) and `log` (shows the change log). All but `log`, `plex` and `folders` run preflight first; all exit 1 on failure. `split`, `ingest`, `folders --apply` and `plex refresh` record in the change log. After an import, `ingest --unattended` and `summary` rescan the Plex music library that holds beets' `directory`, and log it. If Plex is not set up, or the folder is not in a Plex library (the local test library), they print why and skip. A failed rescan prints `WARN` and never undoes the import. Next: move and tag-write commands that log their changes.
+- The library at `/Volumes/media/jbod2/media/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
+- `musicos/` has ten commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, read-only health checks, a report and a log line), `ingest <folder> [--unattended] [--no-plex-refresh]` (preflight, source check, dry run, then the import command; unattended runs it), `gaps` (preflight, then a report of albums with no album artist, year, genre or art, with name and path; guesses nothing), `summary <batch>` (albums in an import batch, those with no MusicBrainz match, and those the importer skipped), `split <folder> --inbox DIR --holding DIR [--apply]` (finds FLAC + cue rips; dry run unless `--apply`), `plex sections` (lists Plex libraries and their folders) and `plex refresh [--section ID|TITLE]` (rescans a music library; needs `BEETSDIR` to log it), `folders --inbox DIR --holding DIR [--path-map MAC=SERVER] [--apply]` (makes inbox and holding folders that Plex ignores; dry run unless `--apply`) `clean-appledouble ROOT [--apply]` (finds the macOS `._` shadow files this Mac leaves on the share and deletes them with `--apply`; only files with the AppleDouble header, dry run by default) and `log` (shows the change log). All but `log`, `plex` and `folders` run preflight first; all exit 1 on failure. `split`, `ingest`, `folders --apply`, `clean-appledouble --apply` and `plex refresh` record in the change log. After an import, `ingest --unattended` and `summary` rescan the Plex music library that holds beets' `directory`, and log it. If Plex is not set up, or the folder is not in a Plex library (the local test library), they print why and skip. A failed rescan prints `WARN` and never undoes the import. Next: move and tag-write commands that log their changes.
 - `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.
