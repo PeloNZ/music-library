@@ -32,7 +32,7 @@ Built on [MusicOS](https://github.com/fernandohermida/MusicOS) by Fernando Hermi
 | `docs/` | beets cheatsheet, layout, setup notes (from MusicOS) |
 | `scripts/library_snapshot.py` | `beet export` wrapper (from MusicOS) |
 | `.venv/` | Python dependencies (gitignored, made by `uv sync`) |
-| `Brewfile` | System tools: `fpcalc`, `flac`, `shnsplit`, `cuetag` |
+| `Brewfile` | System tools: `fpcalc`, `flac`, `shnsplit`, `cuetag.sh` |
 
 ## Set up
 
@@ -59,7 +59,7 @@ Check the tools:
 
 ```sh
 uv run beet version
-fpcalc -version && shnsplit -v && cuetag && flac --version
+fpcalc -version && shnsplit -v && which cuetag.sh cuebreakpoints && flac --version
 ```
 
 ## Develop
@@ -103,5 +103,5 @@ Done: tools installed, dependencies in `.venv`, MusicOS skills and docs copied i
 Open:
 
 - The library at `/Volumes/music` is already in `Artist/Album` folders (191 top-level entries). It has name variants to merge (`motorhead` and `Motörhead`, `Goo Goo Dolls` and `The Goo Goo Dolls`, `Goji.Ra` and `GojiRa`), release-named folders (`Red Hot Chili Peppers - What Hits! (1992) {FLAC} ...`), `desktop.ini`, and `sync.ffs_db` (a FreeFileSync database). Check what else syncs this share before any `beet move`.
-- `musicos/` has five commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, six read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, source check, dry run, then the import command; unattended runs it), `summary <batch>` (albums in an import batch, and those with no MusicBrainz match) and `log` (shows the change log). All but `log` run preflight first; all exit 1 on failure. Next: `gaps`, `split`, `plex-refresh`, and move and tag-write commands that log their changes.
+- `musicos/` has six commands: `preflight` (`BEETSDIR`, the share mount, enabled plugins), `lint` (preflight, read-only health checks, a report and a log line), `ingest <folder> [--unattended]` (preflight, source check, dry run, then the import command; unattended runs it), `summary <batch>` (albums in an import batch, those with no MusicBrainz match, and those the importer skipped), `split <folder> --inbox DIR --holding DIR [--apply]` (finds FLAC + cue rips; dry run unless `--apply`) and `log` (shows the change log). All but `log` run preflight first; all exit 1 on failure. `split` and `ingest` record in the change log. Next: `gaps`, `plex-refresh`, and move and tag-write commands that log their changes.
 - `docs/` and the skills still describe the MusicOS letter layout, the `limit` plugin (deprecated in beets 2.14, not enabled here), and manual steps. Each is rewritten as its script lands.
