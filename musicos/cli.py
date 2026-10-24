@@ -88,6 +88,7 @@ from musicos.split import (
     scan,
     split_rip,
 )
+from musicos.trace import Clock, Trace
 
 # Settings kept out of the repo and out of shell history, such as PLEX_TOKEN.
 # Variables already set in the shell take priority.
@@ -161,7 +162,7 @@ def report_batch(
     env: Mapping[str, str],
     run: Run,
     batch: str,
-    when: datetime,
+    now: Clock,
     source: Path | None = None,
     http: Get = http_get,
     refresh_plex: bool = True,
@@ -199,7 +200,7 @@ def report_batch(
         record(
             changes,
             "import",
-            when,
+            now(),
             **fields,
             albums=summary.albums,
             flagged=flagged,
@@ -208,14 +209,14 @@ def report_batch(
         )
     log_activity(
         env,
-        f"{stamp(when)} ingest {batch} {summary.albums} albums, {flagged} flagged",
+        f"{stamp(now())} ingest {batch} {summary.albums} albums, {flagged} flagged",
     )
     if refresh_plex and not already:
-        rescan_plex(env, http, when, batch)
+        rescan_plex(env, http, now, batch)
     return 0
 
 
-def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -> None:
+def rescan_plex(env: Mapping[str, str], http: Get, now: Clock, batch: str) -> None:
     """After an import, rescan the Plex music library that holds beets' directory.
 
     A rescan that cannot run never undoes the import. It prints why and moves on.
@@ -243,7 +244,7 @@ def rescan_plex(env: Mapping[str, str], http: Get, when: datetime, batch: str) -
     record(
         changes_log(env),
         "plex-refresh",
-        when,
+        now(),
         batch=batch,
         section=section.id,
         title=section.title,
@@ -262,17 +263,27 @@ def show_dry_run(run: Run, sources: list[Path], incremental: bool = False) -> bo
     return True
 
 
-def run_import(run: Run, stream: Stream | None, cmd: list[str], log: Path) -> bool:
+def run_import(
+    run: Run,
+    stream: Stream | None,
+    cmd: list[str],
+    log: Path,
+    trace: Trace,
+    detail: str = "",
+) -> bool:
+    trace.start(detail)
     out = stream(cmd, log) if stream else run(cmd)
     if out.code != 0:
-        print(f"FAIL import: {first_error(out)}")
+        error = first_error(out)
+        print(f"FAIL import: {error}")
+        trace.fail(error)
     return out.code == 0
 
 
 def ingest(
     env: Mapping[str, str],
     run: Run,
-    when: datetime,
+    now: Clock,
     source: Path,
     unattended: bool,
     http: Get = http_get,
@@ -283,7 +294,7 @@ def ingest(
     if not source.is_dir() or not has_audio(source):
         print(f"FAIL source: no audio files under {source}")
         return 1
-    batch = make_batch_id(when, source)
+    batch = make_batch_id(now(), source)
     logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
     if not show_dry_run(run, [source]):
@@ -294,9 +305,10 @@ def ingest(
         print(f"  {user_command(env, cmd)}")
         print(f"Then: {user_command(env, ['musicos', 'summary', batch])}")
         return 0
-    if not run_import(run, stream, cmd, progress_log(logs, batch)):
+    trace = Trace(logs, now, "ingest", batch)
+    if not run_import(run, stream, cmd, progress_log(logs, batch), trace):
         return 1
-    return report_batch(env, run, batch, when, source, http, refresh_plex)
+    return report_batch(env, run, batch, now, source, http, refresh_plex)
 
 
 def root_ok(root: Path, run: Run) -> bool:
@@ -314,7 +326,7 @@ def root_ok(root: Path, run: Run) -> bool:
 def batch_command(
     env: Mapping[str, str],
     args: argparse.Namespace,
-    when: datetime,
+    now: Clock,
     read: TagReader,
     run: Run,
     http: Get = http_get,
@@ -335,7 +347,7 @@ def batch_command(
     logs.mkdir(exist_ok=True)
     candidates_log = logs / "deletion-candidates.jsonl"
     record_candidates(
-        candidates_log, [d for g in groups for d in decide(g)], root, when
+        candidates_log, [d for g in groups for d in decide(g)], root, now()
     )
     wanted = {str(r.folder) for r in releases}
     status = {
@@ -367,11 +379,14 @@ def batch_command(
     if not args.apply:
         print("dry run: nothing imported. Add --apply to import.")
         return 0
-    batch_id = make_batch_id(when, root)
+    batch_id = make_batch_id(now(), root)
     cmd = import_command(sources, batch_id, logs, unattended=True, incremental=True)
-    if not run_import(run, stream, cmd, progress_log(logs, batch_id)):
+    trace = Trace(logs, now, "batch", batch_id)
+    if not run_import(
+        run, stream, cmd, progress_log(logs, batch_id), trace, f"{len(sources)} folders"
+    ):
         return 1
-    return report_batch(env, run, batch_id, when, root, http, not args.no_plex_refresh)
+    return report_batch(env, run, batch_id, now, root, http, not args.no_plex_refresh)
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
@@ -801,7 +816,7 @@ def main(
         return ingest(
             env,
             run,
-            now(),
+            now,
             args.source,
             args.unattended,
             http,
@@ -809,12 +824,12 @@ def main(
             stream,
         )
     if args.command == "batch":
-        return batch_command(env, args, now(), tag_reader, run, http, stream)
+        return batch_command(env, args, now, tag_reader, run, http, stream)
     if args.command == "split":
         return split(env, run, now(), args, which)
     if args.command == "summary":
         return report_batch(
-            env, run, args.batch, now(), None, http, not args.no_plex_refresh
+            env, run, args.batch, now, None, http, not args.no_plex_refresh
         )
     return 0
 

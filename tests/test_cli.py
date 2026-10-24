@@ -240,8 +240,9 @@ def test_unattended_ingest_imports_summarises_and_logs(
     assert run.ran_import()
     assert "1 albums, 1 without a MusicBrainz match" in capsys.readouterr().out
     log = (beets / "logs" / "musicos-activity.log").read_text()
-    assert (
-        log == "2026-10-24 21:30:05 ingest 20261024-2130-deserted 1 albums, 1 flagged\n"
+    assert log == (
+        "2026-10-24 21:30:05 ingest 20261024-2130-deserted start\n"
+        "2026-10-24 21:30:05 ingest 20261024-2130-deserted 1 albums, 1 flagged\n"
     )
 
 
@@ -260,7 +261,33 @@ def test_unattended_ingest_reports_a_failed_import(
 
     assert code == 1
     assert "FAIL import: import failed" in capsys.readouterr().out
-    assert not (beets / "logs" / "musicos-activity.log").exists()
+    assert (beets / "logs" / "musicos-activity.log").read_text() == (
+        "2026-10-24 21:30:05 ingest 20261024-2130-deserted start\n"
+        "2026-10-24 21:30:05 ingest 20261024-2130-deserted FAIL import failed\n"
+    )
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["action"] == "failed"
+    assert entry["command"] == "ingest"
+    assert entry["error"] == "import failed"
+
+
+def test_each_log_line_is_stamped_when_it_is_written(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    ticks = iter(range(100))
+
+    def clock() -> datetime:
+        return datetime(2026, 10, 24, 21, next(ticks))
+
+    main(
+        ["ingest", str(make_source(tmp_path)), "--unattended"],
+        env=make_beetsdir(beets),
+        run=Recorder(),
+        now=clock,
+    )
+
+    start, end = (beets / "logs" / "musicos-activity.log").read_text().splitlines()
+    assert start.split()[:2] < end.split()[:2]
 
 
 def test_summary_reads_a_finished_batch_and_logs(
@@ -2070,3 +2097,31 @@ def test_a_failed_streamed_import_reports_the_last_line(
 
     assert code == 1
     assert "FAIL import: error: disk full" in capsys.readouterr().out
+
+
+def test_batch_apply_writes_a_start_line_before_the_import(tmp_path: Path) -> None:
+    stream = FakeStream()
+
+    _, beets = batch(tmp_path, BatchRun(), "--apply", stream=stream)
+
+    lines = (beets / "logs" / "musicos-activity.log").read_text().splitlines()
+    assert lines[0] == "2026-10-24 21:30:05 batch 20261024-2130-isis start 2 folders"
+    assert lines[1].startswith("2026-10-24 21:30:05 ingest 20261024-2130-isis ")
+
+
+def test_a_failed_batch_import_is_logged_as_a_failure(tmp_path: Path) -> None:
+    stream = FakeStream(code=1, last_line="error: disk full")
+
+    _, beets = batch(tmp_path, BatchRun(), "--apply", stream=stream)
+
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines()[-1] == (
+        "2026-10-24 21:30:05 batch 20261024-2130-isis FAIL error: disk full"
+    )
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["action"] == "failed" and entry["command"] == "batch"
+
+
+def test_batch_dry_run_writes_no_activity_lines(tmp_path: Path) -> None:
+    _, beets = batch(tmp_path, BatchRun())
+
+    assert not (beets / "logs" / "musicos-activity.log").exists()
