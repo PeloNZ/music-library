@@ -13,7 +13,6 @@ import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 import mutagen
@@ -172,62 +171,6 @@ def find_duplicates(releases: list[Release]) -> list[list[Release]]:
         return normalize(first.artist), _album_key(first)[0]
 
     return sorted(groups, key=order)
-
-
-def _title(group: list[Release]) -> str:
-    artist = _most_common([r.artist for r in group], "?")
-    album = _most_common([r.album for r in group]) or group[0].folder.name
-    return f"{artist} - {album} (disc {group[0].disc})"
-
-
-def _row(release: Release, root: Path) -> str:
-    try:
-        folder = release.folder.relative_to(root)
-    except ValueError:
-        folder = release.folder
-    notes = ", ".join(
-        ["cue rip"] * release.cue
-        + ([f"{release.unreadable} unreadable"] if release.unreadable else [])
-    )
-    return (
-        f"| {folder} | {release.tracks} | {release.seconds / 60:.1f} "
-        f"| {release.fmt} | {release.size / 1048576:.0f} MiB | {notes} |"
-    )
-
-
-def _when(when: datetime) -> str:
-    return when.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def render_report(
-    groups: list[list[Release]], checked: int, root: Path, when: datetime
-) -> str:
-    plural = "group" if len(groups) == 1 else "groups"
-    summary = (
-        f"Run at {_when(when)}. {checked} folders checked under {root}. "
-        f"{len(groups)} {plural} found."
-    )
-    lines = ["# Duplicate albums", "", summary]
-    if not groups:
-        lines += ["", "No duplicate albums found."]
-    for group in groups:
-        lines += [
-            "",
-            f"## {_title(group)}",
-            "",
-            "| Folder | Tracks | Minutes | Format | Size | Notes |",
-            "|---|---|---|---|---|---|",
-        ]
-        lines += [_row(r, root) for r in group]
-    return "\n".join(lines) + "\n"
-
-
-def activity_line(groups: list[list[Release]], checked: int, when: datetime) -> str:
-    members = sum(len(g) for g in groups)
-    return (
-        f"{_when(when)} dupes {checked} folders checked, "
-        f"{len(groups)} groups, {members} folders in groups"
-    )
 
 
 LOSSLESS_TYPES = {

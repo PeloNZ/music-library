@@ -1516,17 +1516,58 @@ def test_dupes_prints_the_report_and_writes_the_file_and_one_log_line(
     assert code == 0
     assert "## Isis - Celestial (disc 1)" in out
     assert (
-        "| Isis - Celestial (2000) [EAC-FLAC] | 2 | 10.0 | FLAC 16/44.1 | 0 MiB | cue rip |"
-        in out
-    )
+        "| Isis - Celestial (2000) [EAC-FLAC] | 2 | 10.0 | FLAC 16/44.1 | 0 MiB "
+        "| cue rip | deletion candidate |"
+    ) in out
     assert "Oceanic" not in out.split("## ", 1)[1]  # Oceanic is not in a group
-    assert (beets / "logs" / "last-duplicates-report.md").read_text() == out
+    report = (beets / "logs" / "last-duplicates-report.md").read_text()
+    assert out.startswith(report)
     log = (beets / "logs" / "musicos-activity.log").read_text()
-    assert (
-        log
-        == "2026-10-24 21:30:05 dupes 3 folders checked, 1 groups, 2 folders in groups\n"
+    assert log == (
+        "2026-10-24 21:30:05 dupes 3 folders checked, 1 groups, 2 folders in groups, "
+        "1 deletion candidate\n"
     )
     assert not (beets / "logs" / "changes.jsonl").exists()
+
+
+def test_dupes_adds_each_deletion_candidate_to_the_log_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    args = ["dupes", str(root)]
+    env = make_beetsdir(beets)
+
+    main(args, env=env, now=lambda: NOW, tag_reader=isis_tags)
+    first = capsys.readouterr().out
+    main(args, env=env, now=lambda: NOW, tag_reader=isis_tags)
+    second = capsys.readouterr().out
+
+    entries = read_entries(beets / "logs" / "deletion-candidates.jsonl")
+    assert [e["folder"] for e in entries] == [
+        str((root / "Isis - Celestial (2000) [EAC-FLAC]").resolve())
+    ]
+    assert entries[0]["kept_by"] == [
+        str((root / "Discography" / "(2000) Celestial").resolve())
+    ]
+    assert "1 new deletion candidate added to " in first
+    assert "0 new deletion candidates added to " in second
+
+
+def test_dupes_deletes_nothing_even_when_it_marks_candidates(tmp_path: Path) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+
+    main(
+        ["dupes", str(root)],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+
+    assert (root / "Isis - Celestial (2000) [EAC-FLAC]" / "rip.flac").exists()
 
 
 def test_dupes_changes_nothing_in_the_folder(tmp_path: Path) -> None:
@@ -1580,6 +1621,93 @@ def test_dupes_needs_beetsdir_for_its_report(
     root = isis_library(tmp_path / "Isis")
 
     code = main(["dupes", str(root)], env={}, tag_reader=isis_tags)
+
+    assert code == 1
+    assert "FAIL beetsdir" in capsys.readouterr().out
+
+
+def candidate_log(beets: Path, root: Path) -> Path:
+    main(
+        ["dupes", str(root)],
+        env=make_beetsdir(beets),
+        now=lambda: NOW,
+        tag_reader=isis_tags,
+    )
+    return beets / "logs" / "deletion-candidates.jsonl"
+
+
+def test_candidates_lists_what_is_still_open_with_why_and_what_was_kept(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    candidate_log(beets, root)
+    capsys.readouterr()
+
+    code = main(["candidates"], env=make_beetsdir(beets))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "open" in out and "Isis - Celestial (2000) [EAC-FLAC]" in out
+    assert "FLAC + cue file is lower priority than FLAC tracks already split" in out
+    assert "kept: " in out and "(2000) Celestial" in out
+    assert "1 open" in out and "0 stale" in out
+
+
+def test_candidates_flags_one_whose_kept_copy_has_gone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    candidate_log(beets, root)
+    for f in (root / "Discography" / "(2000) Celestial").iterdir():
+        f.unlink()
+    (root / "Discography" / "(2000) Celestial").rmdir()
+    capsys.readouterr()
+
+    main(["candidates"], env=make_beetsdir(beets))
+
+    out = capsys.readouterr().out
+    assert "stale" in out and "do not delete" in out
+    assert "0 open" in out and "1 stale" in out
+
+
+def test_candidates_hides_done_ones_unless_all_is_given(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = isis_library(tmp_path / "Isis")
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    candidate_log(beets, root)
+    rip = root / "Isis - Celestial (2000) [EAC-FLAC]"
+    for f in rip.iterdir():
+        f.unlink()
+    rip.rmdir()
+    capsys.readouterr()
+
+    main(["candidates"], env=make_beetsdir(beets))
+    hidden = capsys.readouterr().out
+    main(["candidates", "--all"], env=make_beetsdir(beets))
+    shown = capsys.readouterr().out
+
+    assert "Isis - Celestial (2000) [EAC-FLAC]" not in hidden
+    assert "no open deletion candidates" in hidden
+    assert "done" in shown and "Isis - Celestial (2000) [EAC-FLAC]" in shown
+
+
+def test_candidates_with_no_log_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["candidates"], env=make_beetsdir(tmp_path))
+
+    assert code == 0
+    assert "no deletion candidates recorded" in capsys.readouterr().out
+
+
+def test_candidates_needs_beetsdir(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["candidates"], env={})
 
     assert code == 1
     assert "FAIL beetsdir" in capsys.readouterr().out

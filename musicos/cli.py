@@ -16,7 +16,10 @@ from typing import Any
 import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
+from musicos.candidates import list_candidates, record_candidates
 from musicos.changelog import filter_entries, format_entry, read_entries, record
+from musicos.dupereport import activity_line as dupes_activity_line
+from musicos.dupereport import render_report as render_dupes_report
 from musicos.dupes import (
     TagReader,
     audio_folders,
@@ -24,8 +27,6 @@ from musicos.dupes import (
     find_duplicates,
     read_tags,
 )
-from musicos.dupes import activity_line as dupes_activity_line
-from musicos.dupes import render_report as render_dupes_report
 from musicos.envfile import merged_env
 from musicos.folders import (
     FolderError,
@@ -63,6 +64,7 @@ from musicos.preflight import (
     check_tools,
     configured_plugins,
 )
+from musicos.rules import decide
 from musicos.runner import Run, run_command
 from musicos.split import (
     SplitError,
@@ -488,13 +490,50 @@ def dupes(
     if not print_results_if_failed([check_beetsdir(env)]):
         return 1  # the report is written under BEETSDIR
     releases = [describe(folder, read) for folder in audio_folders(root)]
-    groups = find_duplicates(releases)
+    groups = [decide(g) for g in find_duplicates(releases)]
     report = render_dupes_report(groups, len(releases), root, when)
     logs = Path(env["BEETSDIR"]) / "logs"
     logs.mkdir(exist_ok=True)
     (logs / "last-duplicates-report.md").write_text(report)
     log_activity(env, dupes_activity_line(groups, len(releases), when))
+    candidates_log = logs / "deletion-candidates.jsonl"
+    added = record_candidates(
+        candidates_log, [d for group in groups for d in group], root, when
+    )
     print(report, end="")
+    noun = "candidate" if added == 1 else "candidates"
+    print(f"{added} new deletion {noun} added to {candidates_log}")
+    return 0
+
+
+def candidates_command(env: Mapping[str, str], args: argparse.Namespace) -> int:
+    if not print_results_if_failed([check_beetsdir(env)]):
+        return 1
+    log = Path(env["BEETSDIR"]) / "logs" / "deletion-candidates.jsonl"
+    if not read_entries(log):
+        print("no deletion candidates recorded")
+        return 0
+    listed = list_candidates(log, include_done=args.all)
+    if not listed:
+        print("no open deletion candidates")
+        return 0
+    counts = {"open": 0, "stale": 0, "done": 0}
+    open_bytes = 0
+    for entry, status in listed:
+        counts[status] += 1
+        if status == "open":
+            open_bytes += entry["size"]
+        print(
+            f"{status:5}  {entry['size'] / 1048576:5.0f} MiB  {entry['album']}  {entry['folder']}"
+        )
+        print(f"       why: {entry['rule']}")
+        print(f"       kept: {'; '.join(entry['kept_by'])}")
+        if status == "stale":
+            print("       do not delete: a copy that outranked it is missing")
+    summary = f"{counts['open']} open ({open_bytes / 1048576:.0f} MiB), {counts['stale']} stale"
+    if args.all:
+        summary += f", {counts['done']} done"
+    print(summary)
     return 0
 
 
@@ -586,6 +625,12 @@ def main(
     dupes_parser.add_argument(
         "root", type=Path, help="folder to scan, such as an artist"
     )
+    candidates_parser = commands.add_parser(
+        "candidates", help="list the deletion candidates still waiting for you"
+    )
+    candidates_parser.add_argument(
+        "--all", action="store_true", help="include candidates that are already gone"
+    )
     log_parser = commands.add_parser("log", help="show the change log")
     log_parser.add_argument("--batch")
     log_parser.add_argument("--action")
@@ -604,6 +649,8 @@ def main(
         return clean_appledouble(env, args, now())
     if args.command == "dupes":
         return dupes(env, args, now(), tag_reader)
+    if args.command == "candidates":
+        return candidates_command(env, args)
     if not print_results(preflight(env, run)):
         return 1
     if args.command == "lint":

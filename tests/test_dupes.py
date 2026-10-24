@@ -6,17 +6,17 @@ from typing import Any
 
 import pytest
 
+from musicos.dupereport import activity_line, render_report
 from musicos.dupes import (
     Release,
     Tags,
-    activity_line,
     audio_folders,
     describe,
     find_duplicates,
     normalize,
     read_tags,
-    render_report,
 )
+from musicos.rules import Decision, decide
 
 CUE = """\
 REM GENRE "Post-Metal"
@@ -238,28 +238,73 @@ def test_groups_come_out_in_artist_and_album_order() -> None:
 WHEN = datetime(2026, 10, 24, 23, 40, 0)
 
 
-def test_report_shows_each_group_as_a_table_with_relative_folders() -> None:
+def decided(*groups: list[Release]) -> list[list[Decision]]:
+    return [decide(g) for g in groups]
+
+
+def test_report_shows_each_group_as_a_table_with_relative_folders_and_actions() -> None:
     rip = rel("/lib/Isis/Isis - Celestial (2000) [EAC-FLAC]", tracks=11, cue=True)
     copy = rel("/lib/Isis/Disc/(2000) Celestial", size=120 * 1048576, fmt="FLAC 24/48")
 
-    report = render_report([[rip, copy]], 9, Path("/lib/Isis"), WHEN)
+    report = render_report(decided([rip, copy]), 9, Path("/lib/Isis"), WHEN)
 
     assert report.startswith("# Duplicate albums\n")
     assert "2026-10-24 23:40:00" in report
     assert "9 folders checked" in report and "1 group" in report
     assert "## Isis - Celestial (disc 1)" in report
     assert (
-        "| Isis - Celestial (2000) [EAC-FLAC] | 11 | 50.0 | FLAC 16/44.1 | 300 MiB | cue rip |"
+        "| Isis - Celestial (2000) [EAC-FLAC] | 11 | 50.0 | FLAC 16/44.1 | 300 MiB "
+        "| cue rip | deletion candidate |"
+    ) in report
+    assert (
+        "| Disc/(2000) Celestial | 11 | 50.0 | FLAC 24/48 | 120 MiB |  | keep |"
         in report
     )
-    assert "| Disc/(2000) Celestial | 11 | 50.0 | FLAC 24/48 | 120 MiB |  |" in report
+
+
+def test_report_gives_the_reason_for_every_copy_that_is_not_kept() -> None:
+    rip = rel("/lib/Isis/rip", cue=True, tracks=11)
+    copy = rel("/lib/Isis/split", tracks=11)
+
+    report = render_report(decided([rip, copy]), 2, Path("/lib/Isis"), WHEN)
+
+    assert (
+        "- rip: FLAC + cue file is lower priority than FLAC tracks already split"
+        in report
+    )
+    assert "- split:" not in report
+
+
+def test_report_summarises_the_deletion_candidates() -> None:
+    rip = rel("/lib/rip", cue=True, size=300 * 1048576)
+    split = rel("/lib/split")
+    other = rel("/lib/o1", album="Other")
+    other_mp3 = rel("/lib/o2", album="Other", kind="lossy", size=100 * 1048576)
+
+    report = render_report(
+        decided([rip, split], [other, other_mp3]), 4, Path("/lib"), WHEN
+    )
+
+    assert "2 deletion candidates (400 MiB)" in report
+
+
+def test_report_marks_a_tie_and_a_review() -> None:
+    a, b = rel("/lib/a"), rel("/lib/b")
+    wav = rel("/lib/c", album="Z", kind="lossless", fmt="WAV 16/44.1")
+    z2 = rel("/lib/d", album="Z")
+
+    report = render_report(decided([a, b], [wav, z2]), 4, Path("/lib"), WHEN)
+
+    assert "| tie: choose one |" in report
+    assert "| review |" in report
+    assert "WAV 16/44.1 is not in the ranking" in report
 
 
 def test_report_notes_files_that_could_not_be_read() -> None:
     a = rel("/lib/a", unreadable=2)
     b = rel("/lib/b")
 
-    assert "2 unreadable" in render_report([[a, b]], 2, Path("/lib"), WHEN)
+    assert "2 unreadable" in render_report(decided([a, b]), 2, Path("/lib"), WHEN)
 
 
 def test_report_with_no_duplicates_says_so() -> None:
@@ -269,15 +314,19 @@ def test_report_with_no_duplicates_says_so() -> None:
     assert "0 groups" in report
 
 
-def test_activity_line_counts_folders_groups_and_folders_in_groups() -> None:
-    groups = [
-        [rel("/a"), rel("/b")],
-        [rel("/c", album="X"), rel("/d", album="X"), rel("/e", album="X")],
-    ]
+def test_activity_line_counts_folders_groups_and_candidates() -> None:
+    first = decided([rel("/a", cue=True), rel("/b")])
+    second = decided(
+        [
+            rel("/c", album="X"),
+            rel("/d", album="X", kind="lossy"),
+            rel("/e", album="X", kind="lossy"),
+        ]
+    )
 
-    assert (
-        activity_line(groups, 12, WHEN)
-        == "2026-10-24 23:40:00 dupes 12 folders checked, 2 groups, 5 folders in groups"
+    assert activity_line(first + second, 12, WHEN) == (
+        "2026-10-24 23:40:00 dupes 12 folders checked, 2 groups, 5 folders in groups, "
+        "3 deletion candidates"
     )
 
 
