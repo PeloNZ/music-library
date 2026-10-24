@@ -105,6 +105,17 @@ Priority, highest first:
 
 Each log entry has a status read from the disk: `open`, `stale` (every copy that outranked it is gone, so it is no longer safe to delete) `done` (the folder is gone, hidden unless `candidates --all`) or `unknown` (the share is not mounted, so nothing can be told). `dupes` refuses a folder on a share that is not mounted.
 
+## Order of a batch
+
+One artist folder is one batch. Deleting is the last step.
+
+1. `dupes`: find the groups and record the candidates.
+2. The user picks a copy for each tie or review.
+3. `split` each kept cue rip. A cue rip that is a candidate is not split.
+4. `ingest`: import the kept copies, then the Plex rescan, `summary` and `lint`.
+5. The user checks the result in Plex.
+6. The user deletes the candidates by hand. Nothing is deleted before step 5.
+
 ## Rules
 
 - Do not change the real library until the test copy passes.
@@ -115,6 +126,7 @@ Each log entry has a status read from the disk: `open`, `stale` (every copy that
 - Every command that changes files or tags appends to `changes.jsonl`.
 - Never copy between shares. `split` refuses unless the source, the inbox and the holding folder are on one share, and it moves by rename.
 - Keep source FLAC and `.cue` files until the split tracks are confirmed correct.
+- Deleting deletion candidates is the last step of a batch, after the import is checked.
 
 ## Status
 

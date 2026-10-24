@@ -42,3 +42,4 @@ After an import, `summary` and `ingest --unattended` rescan the Plex music libra
 
 - The source folder is not changed. `import.copy: yes` keeps the original files until the user approves move mode.
 - A cue-sheet rip (one FLAC plus a `.cue`) imports as a single track. Split it first.
+- Deleting deletion candidates is the last step of a batch, after the import, the Plex rescan and the user's check. See `music-dupes`.
