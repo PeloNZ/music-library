@@ -1,3 +1,5 @@
+from pathlib import PurePosixPath
+
 import pytest
 
 from musicos.plex import (
@@ -8,6 +10,7 @@ from musicos.plex import (
     choose_section,
     music_sections,
     parse_sections,
+    section_for_path,
 )
 from tests.fakes import FakeHttp
 
@@ -119,3 +122,23 @@ def test_an_unreachable_server_is_reported_with_its_address() -> None:
         Plex(URL, TOKEN, http).sections()
 
     assert TOKEN not in str(error.value)
+
+
+def test_section_for_path_finds_the_music_library_that_holds_a_folder() -> None:
+    sections = [MOVIES, MUSIC, LIVE]
+
+    assert section_for_path(PurePosixPath("/data/music"), sections) == MUSIC
+    assert section_for_path(PurePosixPath("/data/more-music/Cake"), sections) == MUSIC
+    assert section_for_path(PurePosixPath("/data/live"), sections) == LIVE
+
+
+def test_section_for_path_ignores_libraries_that_are_not_music() -> None:
+    assert section_for_path(PurePosixPath("/data/movies/x"), [MOVIES, MUSIC]) is None
+
+
+def test_section_for_path_needs_a_whole_folder_name_match() -> None:
+    assert section_for_path(PurePosixPath("/data/music2"), [MUSIC]) is None
+
+
+def test_section_for_path_is_none_when_no_library_holds_the_folder() -> None:
+    assert section_for_path(PurePosixPath("/elsewhere"), [MUSIC, LIVE]) is None

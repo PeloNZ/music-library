@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 
 class PlexError(Exception):
@@ -118,3 +119,13 @@ def plex_from_env(env: Mapping[str, str], get: Get = http_get) -> Plex:
         if not env.get(name):
             raise PlexError(f"{name} is not set")
     return Plex(env["PLEX_URL"], env["PLEX_TOKEN"], get)
+
+
+def section_for_path(path: PurePosixPath, sections: list[Section]) -> Section | None:
+    """The music library whose folder is, or holds, this server path."""
+    for section in music_sections(sections):
+        for location in section.locations:
+            root = PurePosixPath(location)
+            if path == root or root in path.parents:
+                return section
+    return None
