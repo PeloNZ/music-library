@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What MusicOS is
 
-MusicOS is an agent-driven layer for organizing a real, physical music collection using [beets](https://beets.io/) as the underlying library engine. Beets is a runtime dependency only — installed from PyPI (`pipx install beets` or equivalent, see `docs/SETUP.md`), never vendored or forked into this repo. Every skill and script here shells out to the `beet` CLI; nothing in this repo `import`s beets as a Python library. There is no wiki, knowledge base, or markdown synthesis layer here — the thing being maintained is the actual collection: audio files on disk plus beets' SQLite-backed tag database. See `docs/ROADMAP.md` for what's intentionally not built yet.
+MusicOS is an agent-driven layer for organizing a real, physical music collection using [beets](https://beets.io/) as the underlying library engine. Beets is a runtime dependency only — installed from PyPI (`pipx install beets` or equivalent, see `docs/SETUP.md`), never vendored or forked into this repo. Every skill and script here runs beets through the `beet` CLI; nothing in this repo `import`s beets as a Python library. The `musicos` commands also read tags with `mutagen`, call the Plex HTTP API, and run `shnsplit`, `cuebreakpoints` and `cuetag.sh` to split cue rips. There is no wiki, knowledge base, or markdown synthesis layer here — the thing being maintained is the actual collection: audio files on disk plus beets' SQLite-backed tag database. See `docs/ROADMAP.md` for what's intentionally not built yet.
 
-Agent work happens through eight Claude Code skills under `.claude/skills/`, each a thin orchestration layer over the stock `beet` CLI — no custom beets plugin code is part of this project:
+Agent work happens through eight Claude Code skills under `.claude/skills/`, each a thin orchestration layer over the stock `beet` CLI and the `musicos` commands — no custom beets plugin code is part of this project:
 
 | Skill | Does |
 |---|---|
@@ -37,11 +37,11 @@ There is no `beets/` directory in this repo — beets is installed separately (s
 ## Invariants
 
 - **Never vendor or fork beets into this repo.** It's a separate, independently-maintained upstream project, depended on only as an installed CLI tool (see `docs/SETUP.md`).
-- **No new beets plugin code.** All behavior comes from shelling out to the stock `beet` CLI (`import`, `move`, `export`, `modify`, `duplicates`, `missing`, `unimported`, etc.) plus the zero-extra-dependency plugins listed in `docs/BEETS-CHEATSHEET.md`.
+- **No new beets plugin code.** Library changes go through the stock `beet` CLI (`import`, `move`, `export`, `modify`, `duplicates`, `missing`, `unimported`, etc.) and the plugins listed in `docs/BEETS-CHEATSHEET.md`. `musicos` code adds only what beets does not do: duplicate and gap reports, cue splitting, `._` cleanup, Plex rescans and the change log.
 - **`beet modify` writes audio file tags by default.** Any bookkeeping-only write must pass `-W` or it will rewrite files on disk.
 - **Always preview before moving files.** `beet move --pretend` (or `beet import --pretend`) before the real command, every time — these operations touch the user's actual files.
 - **The library is the source of truth.** No parallel notes/wiki/synthesis artifact exists to disagree with it.
-- **Nothing here has been installed or run for real yet.** Until `docs/SETUP.md` has been walked through, there is no live `BEETSDIR`, no `library.db`, and no external library folder — skills should fail gracefully and point at setup rather than assume a live library exists.
+- **Fail gracefully without a live library.** When `BEETSDIR`, `library.db` or the library folder is missing, skills point at setup (`docs/SETUP.md`) and do not assume a library exists.
 
 ## Where to look next
 
