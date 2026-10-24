@@ -1,0 +1,32 @@
+"""Find and remove the `._*` shadow files macOS writes next to files on an SMB share.
+
+A shadow file holds a file's extended attributes in the AppleDouble format.
+A file whose name starts with `._` is only treated as one when its first
+bytes are the AppleDouble header, so a real file with such a name is safe.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+APPLEDOUBLE_MAGIC = bytes([0x00, 0x05, 0x16, 0x07])
+
+
+def _is_shadow(path: Path) -> bool:
+    if path.is_symlink():
+        return False
+    with path.open("rb") as f:
+        return f.read(len(APPLEDOUBLE_MAGIC)) == APPLEDOUBLE_MAGIC
+
+
+def find_appledouble(root: Path) -> list[Path]:
+    """Every AppleDouble shadow file under root, in path order. Symlinked
+    folders are not followed. A shadow whose data file is gone is included."""
+    found = []
+    for folder, _, names in os.walk(root, followlinks=False):
+        for name in names:
+            path = Path(folder) / name
+            if name.startswith("._") and _is_shadow(path):
+                found.append(path)
+    return sorted(found)
