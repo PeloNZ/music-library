@@ -30,6 +30,7 @@ class Tags:
     disc: str
     length: float
     fmt: str
+    kind: str = "flac"  # flac, lossless (any other lossless) or lossy
 
 
 TagReader = Callable[[Path], Tags | None]
@@ -48,6 +49,7 @@ class Release:
     size: int
     cue: bool
     unreadable: int
+    kind: str = "flac"
 
 
 def _audio_files(folder: Path) -> list[Path]:
@@ -121,6 +123,7 @@ def describe(folder: Path, read_tags: TagReader) -> Release:
         size=sum(p.stat().st_size for p in files),
         cue=is_rip,
         unreadable=len(files) - len(tags),
+        kind=_most_common([t.kind for t in tags], "lossy"),
     )
 
 
@@ -227,6 +230,35 @@ def activity_line(groups: list[list[Release]], checked: int, when: datetime) -> 
     )
 
 
+LOSSLESS_TYPES = {
+    "AIFF",
+    "WAVE",
+    "MonkeysAudio",
+    "WavPack",
+    "TrueAudio",
+    "OptimFROG",
+    "DSF",
+    "DSDIFF",
+}
+
+
+def _kind(audio: mutagen.FileType) -> str:
+    """flac, lossless for any other lossless format, or lossy. MP4 files are
+    lossless only when the codec is ALAC: AAC is lossy but reports bit depth too."""
+    name = type(audio).__name__
+    if name == "FLAC":
+        return "flac"
+    if name in LOSSLESS_TYPES:
+        return "lossless"
+    if name == "EasyMP4":
+        return (
+            "lossless"
+            if str(getattr(audio.info, "codec", "")).startswith("alac")
+            else "lossy"
+        )
+    return "lossy"
+
+
 def _disc(tag: str) -> str:
     """The disc number from a `1` or `1/2` tag. Missing, unreadable or 0, which
     beets and many taggers use for "not set", all mean disc 1."""
@@ -249,7 +281,12 @@ def read_tags(path: Path) -> Tags | None:
 
     info = audio.info
     suffix = path.suffix.lstrip(".").upper()
-    if hasattr(info, "bits_per_sample") and hasattr(info, "sample_rate"):
+    kind = _kind(audio)
+    if (
+        kind != "lossy"
+        and hasattr(info, "bits_per_sample")
+        and hasattr(info, "sample_rate")
+    ):
         fmt = f"{suffix} {info.bits_per_sample}/{info.sample_rate / 1000:g}"
     elif getattr(info, "bitrate", 0):
         fmt = f"{suffix} {round(info.bitrate / 1000)}k"
@@ -262,4 +299,5 @@ def read_tags(path: Path) -> Tags | None:
         disc=_disc(first("discnumber")),
         length=float(info.length),
         fmt=fmt,
+        kind=kind,
     )

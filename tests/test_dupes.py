@@ -378,3 +378,54 @@ def test_a_disc_number_of_zero_means_not_set_and_reads_as_disc_one(
 
     assert tags is not None
     assert tags.disc == "1"
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("name", "options", "kind"),
+    [
+        ("t.flac", ["-c:a", "flac"], "flac"),
+        ("t.mp3", ["-c:a", "libmp3lame"], "lossy"),
+        ("t.opus", ["-c:a", "libopus"], "lossy"),
+        ("aac.m4a", ["-c:a", "aac"], "lossy"),
+        ("alac.m4a", ["-c:a", "alac"], "lossless"),
+        ("t.wav", [], "lossless"),
+        ("t.aiff", [], "lossless"),
+    ],
+)
+def test_read_tags_tells_flac_other_lossless_and_lossy_apart(
+    tmp_path: Path, name: str, options: list[str], kind: str
+) -> None:
+    path = tmp_path / name
+    make_audio(path, *options)
+
+    tags = read_tags(path)
+
+    assert tags is not None
+    assert tags.kind == kind
+
+
+@needs_ffmpeg
+def test_an_aac_file_is_named_by_bitrate_not_by_bit_depth(tmp_path: Path) -> None:
+    path = tmp_path / "aac.m4a"
+    make_audio(path, "-c:a", "aac", "-b:a", "128k")
+
+    tags = read_tags(path)
+
+    assert tags is not None
+    assert tags.fmt.startswith("M4A ") and tags.fmt.endswith("k")
+    assert "/" not in tags.fmt
+
+
+def test_a_release_takes_the_most_common_kind_of_its_files(tmp_path: Path) -> None:
+    folder = tmp_path / "x"
+    touch(folder, "1.mp3", "2.mp3", "3.flac")
+    read = tags_by_name(
+        {
+            "1.mp3": flac("A", kind="lossy"),
+            "2.mp3": flac("A", kind="lossy"),
+            "3.flac": flac("A", kind="flac"),
+        }
+    )
+
+    assert describe(folder, read).kind == "lossy"
