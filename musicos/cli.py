@@ -79,7 +79,7 @@ from musicos.preflight import (
     configured_plugins,
 )
 from musicos.rules import decide
-from musicos.runner import Run, Stream, first_error, run_command, stream_command
+from musicos.runner import Output, Run, Stream, first_error, run_command, stream_command
 from musicos.split import (
     SplitError,
     check_one_share,
@@ -407,12 +407,25 @@ def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
     return 0
 
 
+def followed(run: Run, stream: Stream | None, log: Path) -> Run:
+    """`run`, except that the long tools write their output to `log` as it
+    appears. cuebreakpoints stays on `run`: its stdout is data, not progress."""
+
+    def tool(cmd: list[str]) -> Output:
+        if stream and cmd[0] != "cuebreakpoints":
+            return stream(cmd, log)
+        return run(cmd)
+
+    return tool
+
+
 def split(
     env: Mapping[str, str],
     run: Run,
-    when: datetime,
+    now: Clock,
     args: argparse.Namespace,
     which: Callable[[str], str | None],
+    stream: Stream | None = None,
 ) -> int:
     tools = check_tools(["cuebreakpoints", "shnsplit", "cuetag.sh"], which)
     if not tools.ok:
@@ -439,18 +452,25 @@ def split(
         print("dry run: nothing changed. Add --apply to split.")
         return 0
     failed = False
+    logs = logs_dir(env)
     for rip in found.rips:
         label = rip.folder.relative_to(root)
+        trace = Trace(logs, now, "split", str(label))
+        trace.start(f"{cue_track_count(read_cue(rip.cue))} tracks")
+        run_tool = followed(
+            run, stream, logs / f"split-{make_batch_id(now(), rip.folder)}.out"
+        )
         try:
-            result = split_rip(rip, inbox, holding, run)
+            result = split_rip(rip, inbox, holding, run_tool)
         except SplitError as exc:
             print(f"FAIL {label}: {exc}")
+            trace.fail(str(exc))
             failed = True
             continue
         record(
             changes_log(env),
             "split",
-            when,
+            now(),
             source=str(rip.folder),
             flac=rip.flac.name,
             cue=rip.cue.name,
@@ -458,6 +478,7 @@ def split(
             tracks=[str(t) for t in result.tracks],
             holding=str(result.holding),
         )
+        trace.done(f"{len(result.tracks)} tracks")
         print(f"ok   {label}: {len(result.tracks)} tracks in {inbox / rip.folder.name}")
     return 1 if failed else 0
 
@@ -826,7 +847,7 @@ def main(
     if args.command == "batch":
         return batch_command(env, args, now, tag_reader, run, http, stream)
     if args.command == "split":
-        return split(env, run, now(), args, which)
+        return split(env, run, now, args, which, stream)
     if args.command == "summary":
         return report_batch(
             env, run, args.batch, now, None, http, not args.no_plex_refresh

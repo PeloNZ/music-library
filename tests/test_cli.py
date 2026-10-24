@@ -748,7 +748,98 @@ def test_split_apply_reports_a_failed_rip_and_carries_on(
     assert "FAIL Bad: a.cue lists no audio tracks" in capsys.readouterr().out
     assert (tmp_path / "holding" / "Good").exists()
     assert (tmp_path / "src" / "Bad" / "a.flac").exists()
-    assert len(read_entries(beets / "logs" / "changes.jsonl")) == 1
+    entries = read_entries(beets / "logs" / "changes.jsonl")
+    assert [e["action"] for e in entries] == ["failed", "split"]
+    assert entries[0]["subject"] == "Bad"
+
+
+class StreamTools(SplitTools):
+    """Fake stream_command: runs the tool fake and remembers which log it got."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.streamed: list[tuple[str, Path]] = []
+
+    def stream(self, cmd: list[str], log: Path) -> Output:
+        self.streamed.append((cmd[0], log))
+        return SplitTools.__call__(self, cmd)
+
+
+def test_split_streams_shnsplit_and_cuetag_to_a_log_that_can_be_followed(
+    tmp_path: Path,
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+    tools = StreamTools()
+
+    main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=tools,
+        now=lambda: NOW,
+        which=have_tools,
+        stream=tools.stream,
+    )
+
+    log = beets / "logs" / "split-20261024-2130-deserted.out"
+    assert tools.streamed == [("shnsplit", log), ("cuetag.sh", log)]
+
+
+def test_split_writes_a_start_and_a_done_line_for_each_rip(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text() == (
+        "2026-10-24 21:30:05 split Deserted start 3 tracks\n"
+        "2026-10-24 21:30:05 split Deserted done 3 tracks\n"
+    )
+
+
+def test_split_logs_a_failed_rip_as_a_failure(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    main(
+        split_args(tmp_path, "--apply"),
+        env=make_beetsdir(beets),
+        run=SplitTools(fail="shnsplit"),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines() == [
+        "2026-10-24 21:30:05 split Deserted start 3 tracks",
+        "2026-10-24 21:30:05 split Deserted FAIL shnsplit: boom",
+    ]
+    (entry,) = read_entries(beets / "logs" / "changes.jsonl")
+    assert entry["action"] == "failed" and entry["error"] == "shnsplit: boom"
+
+
+def test_split_dry_run_writes_no_activity_lines(tmp_path: Path) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    make_rips(tmp_path / "src", "Deserted")
+
+    main(
+        split_args(tmp_path),
+        env=make_beetsdir(beets),
+        run=SplitTools(),
+        now=lambda: NOW,
+        which=have_tools,
+    )
+
+    assert not (beets / "logs" / "musicos-activity.log").exists()
 
 
 def test_split_lists_ambiguous_folders_and_does_not_split_them(

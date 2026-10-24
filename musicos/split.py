@@ -130,7 +130,7 @@ def split_rip(rip: Rip, inbox: Path, holding: Path, run: Run) -> SplitResult:
             points_file.write_text(points.stdout)
             _check(
                 run(
-                    ["shnsplit", "-f", str(points_file), "-q", "-o", "flac"]
+                    ["shnsplit", "-f", str(points_file), "-o", "flac"]
                     + ["-d", str(staging), str(rip.flac)]
                 ),
                 "shnsplit",
