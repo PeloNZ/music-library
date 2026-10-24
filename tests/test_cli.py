@@ -197,7 +197,7 @@ def test_ingest_prints_the_command_and_does_not_import(
     out = capsys.readouterr().out
     assert code == 0
     assert "Album: x" in out
-    assert "uv run beet import -i -R -l " in out
+    assert f"BEETSDIR={beets} uv run beet import -i -R -l " in out
     assert "musicos_batch=20261024-2130-deserted" in out
     assert "-q" not in out
     assert not run.ran_import()
@@ -500,12 +500,25 @@ def test_summary_prints_one_command_to_retry_only_the_skipped_albums(
 
     out = capsys.readouterr().out
     retry = (
-        "uv run beet import -i -R -l "
+        f"BEETSDIR={beets} uv run beet import -i -R -l "
         f"{beets}/logs/import-b1-retry.log --set musicos_batch=b1 "
         "'/inbox/Cake/Fashion Nugget' '/inbox/Isis/[2004] Panopticon'"
     )
     assert retry in out
     assert "Demo'" not in retry
+
+
+def test_summary_retries_each_folder_of_a_skip_line_that_names_several(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    beets = tmp_path / "beets"
+    beets.mkdir()
+    write_import_log(beets, "b1", "skip /inbox/Isis/CD1; /inbox/Isis/CD2\n")
+
+    main(["summary", "b1"], env=make_beetsdir(beets), run=Recorder(), now=lambda: NOW)
+
+    out = capsys.readouterr().out
+    assert "--set musicos_batch=b1 /inbox/Isis/CD1 /inbox/Isis/CD2" in out
 
 
 def test_summary_with_nothing_skipped_prints_no_retry_command(
@@ -1851,6 +1864,7 @@ def test_batch_dry_run_previews_the_kept_folders_and_imports_nothing(
             "beet",
             "import",
             "--pretend",
+            "-i",
             f"{root}/Discography/(2000) Celestial",
             f"{root}/Oceanic",
         ]

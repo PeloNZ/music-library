@@ -117,7 +117,7 @@ One artist folder is one batch. Deleting is the last step.
 6. The user checks the result in Plex.
 7. The user deletes the candidates by hand. Nothing is deleted before step 6.
 
-`uv run musicos batch <artist-folder>` is a dry run. It decides from the disk and the candidates log:
+`uv run musicos batch <artist-folder>` is a dry run. It decides from the disk and the candidates log, and adds new deletion candidates to the log as `dupes` does:
 
 | Folder | Result |
 |---|---|
@@ -129,7 +129,9 @@ One artist folder is one batch. Deleting is the last step.
 | A kept FLAC + cue rip | left out: split it first |
 | Beets already holds the folder | left out |
 
-It prints the folders, the size that copy mode adds, and the `beet import --pretend` list. `--apply` runs one `beet import -i -R -q --quiet-fallback skip`. Strong matches apply. A weak match is skipped and logged, never guessed. `-i` skips a folder beets imported before, and `-R` retries a skipped one, so running `batch` again after you fix a decision imports only what is left.
+It prints the folders, the size that copy mode adds, and the `beet import --pretend` list. `--apply` runs one `beet import -i -R -q --quiet-fallback skip`. Strong matches apply. A weak match is skipped and logged, never guessed. `-i` skips a folder beets imported before, and `-R` retries a skipped one, so running `batch` again after you fix a decision imports only what is left. The preview skips imported folders too, but the list of folders still names them.
+
+Known limit: a multi-disc album in `CD1/` and `CD2/` folders is passed to beets as two folders. Import it with `ingest` on its parent folder.
 
 ## Rules
 

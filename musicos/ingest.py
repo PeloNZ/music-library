@@ -27,8 +27,9 @@ def make_batch_id(when: datetime, source: Path) -> str:
 
 
 def dry_run_command(sources: list[Path]) -> list[str]:
-    """Lists the files beets would import. It does not show matches."""
-    return ["beet", "import", "--pretend", *map(str, sources)]
+    """Lists the files beets would import, leaving out folders it imported before.
+    It does not show matches."""
+    return ["beet", "import", "--pretend", "-i", *map(str, sources)]
 
 
 def import_command(

@@ -46,8 +46,14 @@ BATCH = "20261024-2140-gatecreeper-2019-deserted"
 LOGS = Path("/repo/beetsdir/logs")
 
 
-def test_dry_run_only_lists_files() -> None:
-    assert dry_run_command([SOURCE]) == ["beet", "import", "--pretend", str(SOURCE)]
+def test_dry_run_only_lists_files_beets_would_import() -> None:
+    assert dry_run_command([SOURCE]) == [
+        "beet",
+        "import",
+        "--pretend",
+        "-i",
+        str(SOURCE),
+    ]
 
 
 def test_dry_run_of_several_folders_lists_each() -> None:

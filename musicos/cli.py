@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -142,6 +143,11 @@ def changes_log(env: Mapping[str, str]) -> Path:
     return logs_dir(env) / "changes.jsonl"
 
 
+def user_command(env: Mapping[str, str], cmd: list[str]) -> str:
+    """A command line for the user's own terminal, pointing at this BEETSDIR."""
+    return f"BEETSDIR={shlex.quote(env['BEETSDIR'])} uv run {shlex.join(cmd)}"
+
+
 def log_activity(env: Mapping[str, str], line: str) -> None:
     logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
@@ -174,10 +180,15 @@ def report_batch(
         print(f"{len(logged)} logged by the importer (not imported as matched):")
         for entry in logged:
             print(f"  {entry.kind}: {entry.path}")
-    skipped = [Path(e.path) for e in logged if e.kind == "skip"]
+    skipped = [
+        Path(folder)
+        for e in logged
+        if e.kind == "skip"
+        for folder in re.split(r"; (?=/)", e.path)  # beets joins an album's folders
+    ]
     if skipped:
         print("Decide the skipped albums in your own terminal. Beets asks for each:")
-        print(f"  uv run {shlex.join(retry_command(skipped, batch, logs_dir(env)))}")
+        print(f"  {user_command(env, retry_command(skipped, batch, logs_dir(env)))}")
     fields: dict[str, Any] = {"batch": batch}
     if source is not None:
         fields["source"] = str(source)
@@ -270,8 +281,8 @@ def ingest(
     cmd = import_command([source], batch, logs, unattended)
     if not unattended:
         print("Run this in your own terminal. The match prompts need one:")
-        print(f"  uv run {shlex.join(cmd)}")
-        print(f"Then: uv run musicos summary {batch}")
+        print(f"  {user_command(env, cmd)}")
+        print(f"Then: {user_command(env, ['musicos', 'summary', batch])}")
         return 0
     out = run(cmd)
     if out.code != 0:
