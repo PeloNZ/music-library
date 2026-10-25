@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
-from musicos.batch import plan_batch
+from musicos.batch import BatchPlan, plan_batch
 from musicos.candidates import list_candidates, record_candidates, status_of
 from musicos.changelog import (
     CHANGES_LOG,
@@ -332,6 +332,26 @@ def root_ok(root: Path, run: Run) -> bool:
     return True
 
 
+def plan_folder(
+    root: Path, held: set[str], read: TagReader, candidates_log: Path, when: datetime
+) -> tuple[int, BatchPlan]:
+    """What `batch` would do for one folder, and how many of its folders beets
+    already holds. New deletion candidates go to `candidates_log`."""
+    folders = audio_folders(root)
+    releases = [describe(f, read) for f in folders if str(f) not in held]
+    groups = find_duplicates(releases)
+    record_candidates(
+        candidates_log, [d for g in groups for d in decide(g)], root, when
+    )
+    wanted = {str(r.folder) for r in releases}
+    status = {
+        e["folder"]: status_of(e, lambda root: True)  # the caller checked the share
+        for e in read_entries(candidates_log)
+        if e["folder"] in wanted
+    }
+    return len(folders) - len(releases), plan_batch(releases, groups, status)
+
+
 def batch_command(
     env: Mapping[str, str],
     args: argparse.Namespace,
@@ -349,23 +369,12 @@ def batch_command(
     except RuntimeError as exc:
         print(f"FAIL beets: {exc}")
         return 1
-    folders = audio_folders(root)
-    releases = [describe(f, read) for f in folders if str(f) not in held]
-    groups = find_duplicates(releases)
     logs = logs_dir(env)
     logs.mkdir(exist_ok=True)
-    candidates_log = logs / "deletion-candidates.jsonl"
-    record_candidates(
-        candidates_log, [d for g in groups for d in decide(g)], root, now()
+    already, plan = plan_folder(
+        root, held, read, logs / "deletion-candidates.jsonl", now()
     )
-    wanted = {str(r.folder) for r in releases}
-    status = {
-        e["folder"]: status_of(e, lambda root: True)  # root_ok checked the share
-        for e in read_entries(candidates_log)
-        if e["folder"] in wanted
-    }
-    plan = plan_batch(releases, groups, status)
-    print(f"{len(folders) - len(releases)} folders already in beets")
+    print(f"{already} folders already in beets")
     for r in plan.candidates:
         print(f"deletion candidate, left out: {r.folder}")
     for r in plan.review:
