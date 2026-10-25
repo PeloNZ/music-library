@@ -90,6 +90,14 @@ def _questions(artist: ArtistPlan) -> list[str]:
     return lines
 
 
+STATUSES = (READY, NEEDS_YOU, NOTHING, ERROR)
+
+
+def status_counts(artists: list[ArtistPlan]) -> str:
+    """For example `ready 2, needs you 1, nothing to import 0, error 0`."""
+    return ", ".join(f"{s} {sum(a.status == s for a in artists)}" for s in STATUSES)
+
+
 def render_batch_all_report(
     artists: list[ArtistPlan],
     root: Path,
@@ -98,11 +106,7 @@ def render_batch_all_report(
     command: Callable[[Path], str],
 ) -> str:
     """`command` gives the `batch` command line for an artist folder."""
-    by_status = {
-        s: [a for a in artists if a.status == s]
-        for s in (READY, NEEDS_YOU, NOTHING, ERROR)
-    }
-    counts = ", ".join(f"{s} {len(by_status[s])}" for s in by_status)
+    by_status = {s: [a for a in artists if a.status == s] for s in STATUSES}
     kept = [r for a in artists for r in a.plan.kept]
     out = [
         "# Batch preview",
@@ -112,7 +116,7 @@ def render_batch_all_report(
         "",
         "## Totals",
         "",
-        f"- Artists: {len(artists)} ({counts})",
+        f"- Artists: {len(artists)} ({status_counts(artists)})",
         f"- Folders already in beets: {sum(a.already for a in artists)}",
         f"- Folders to import: {len(kept)}",
         f"- Copy size: {gib(sum(r.size for r in kept))}",

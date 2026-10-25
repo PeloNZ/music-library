@@ -1,5 +1,7 @@
 import errno
+import json
 import os
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -1901,7 +1903,7 @@ def test_candidates_needs_beetsdir(capsys: pytest.CaptureFixture[str]) -> None:
     assert "FAIL beetsdir" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", ["dupes", "batch"])
+@pytest.mark.parametrize("command", ["dupes", "batch", "batch-all"])
 def test_a_root_on_a_share_that_is_not_mounted_is_refused(
     command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1921,7 +1923,7 @@ def test_a_root_on_a_share_that_is_not_mounted_is_refused(
     )
 
 
-@pytest.mark.parametrize("command", ["dupes", "batch"])
+@pytest.mark.parametrize("command", ["dupes", "batch", "batch-all"])
 def test_a_root_that_is_not_a_folder_is_refused(
     command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2372,4 +2374,151 @@ def test_clean_appledouble_logs_a_run_with_failed_deletes_as_a_failure(
 
     assert (beets / "logs" / "musicos-activity.log").read_text().splitlines()[-1] == (
         f"2026-10-24 21:30:05 clean-appledouble {root} FAIL deleted 1, failed 1"
+    )
+
+
+def music_library(tmp_path: Path) -> Path:
+    """Isis (Celestial twice, Oceanic), Dio (one album), a hidden folder and a
+    loose file."""
+    root = tmp_path / "music"
+    isis_library(root / "Isis")
+    holy_diver = root / "Dio" / "Holy Diver"
+    holy_diver.mkdir(parents=True)
+    (holy_diver / "01.flac").write_bytes(b"x")
+    hidden = root / ".hidden" / "Album"
+    hidden.mkdir(parents=True)
+    (hidden / "01.flac").write_bytes(b"x")
+    (root / "stray.mp3").write_bytes(b"x")
+    return root
+
+
+def batch_all(
+    tmp_path: Path,
+    run: Run,
+    stream: Stream | None = None,
+    tag_reader: Callable[[Path], Tags | None] = isis_tags,
+) -> tuple[int, Path]:
+    root = music_library(tmp_path)
+    beets = tmp_path / "beets"
+    beets.mkdir(exist_ok=True)
+    code = main(
+        ["batch-all", str(root)],
+        env=make_beetsdir(beets),
+        run=run,
+        now=lambda: NOW,
+        tag_reader=tag_reader,
+        stream=stream,
+    )
+    return code, beets
+
+
+def test_batch_all_previews_every_artist_and_imports_nothing(tmp_path: Path) -> None:
+    run = BatchRun()
+
+    code, beets = batch_all(tmp_path, run)
+
+    root = (tmp_path / "music").resolve()
+    assert code == 0
+    pretends = run.imports()
+    assert [c[:4] for c in pretends] == [["beet", "import", "--pretend", "-i"]] * 2
+    assert pretends[0][4:] == [f"{root}/Dio/Holy Diver"]
+    assert pretends[1][4:] == [
+        f"{root}/Isis/Discography/(2000) Celestial",
+        f"{root}/Isis/Oceanic",
+    ]
+    report = (beets / "logs" / "last-batch-all-report.md").read_text()
+    assert "Artists: 2 (ready 2, needs you 0, nothing to import 0, error 0)" in report
+    assert "Loose audio files at the root: 1" in report
+    plan = json.loads((beets / "logs" / "last-batch-all-plan.json").read_text())
+    assert [a["name"] for a in plan["artists"]] == ["Dio", "Isis"]
+
+
+def test_batch_all_asks_beets_for_its_folders_once(tmp_path: Path) -> None:
+    run = BatchRun()
+
+    batch_all(tmp_path, run)
+
+    assert len([c for c in run.commands if c[:3] == ["beet", "ls", "-a"]]) == 1
+
+
+def test_batch_all_records_new_deletion_candidates(tmp_path: Path) -> None:
+    _, beets = batch_all(tmp_path, BatchRun())
+
+    (entry,) = read_entries(beets / "logs" / "deletion-candidates.jsonl")
+    assert entry["folder"].endswith("Isis - Celestial (2000) [EAC-FLAC]")
+
+
+def test_batch_all_streams_pretend_output_and_one_line_per_artist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stream = FakeStream()
+
+    _, beets = batch_all(tmp_path, BatchRun(), stream=stream)
+
+    log = beets / "logs" / "batch-all-20261024-2130-music.out"
+    assert [call_log for _, call_log in stream.calls] == [log, log]
+    assert f"following: {log}" in capsys.readouterr().out
+    assert log.read_text().splitlines() == [
+        "1/2 Dio: ready, 1 to import, 0.0 GiB",
+        "2/2 Isis: ready, 2 to import, 0.0 GiB",
+    ]
+
+
+def test_batch_all_writes_a_start_and_a_done_line(tmp_path: Path) -> None:
+    _, beets = batch_all(tmp_path, BatchRun())
+
+    assert (beets / "logs" / "musicos-activity.log").read_text().splitlines() == [
+        "2026-10-24 21:30:05 batch-all 20261024-2130-music start 2 artists",
+        (
+            "2026-10-24 21:30:05 batch-all 20261024-2130-music done "
+            "ready 2, needs you 0, nothing to import 0, error 0"
+        ),
+    ]
+
+
+class PretendFailsForDio(BatchRun):
+    def __call__(self, cmd: list[str]) -> Output:
+        if cmd[:3] == ["beet", "import", "--pretend"] and "Dio" in cmd[-1]:
+            self.commands.append(cmd)
+            return Output("", "error: no such folder\n", 1)
+        return super().__call__(cmd)
+
+
+def test_a_failed_pretend_marks_that_artist_and_the_run_goes_on(
+    tmp_path: Path,
+) -> None:
+    code, beets = batch_all(tmp_path, PretendFailsForDio())
+
+    assert code == 1
+    report = (beets / "logs" / "last-batch-all-report.md").read_text()
+    assert "Artists: 2 (ready 1, needs you 0, nothing to import 0, error 1)" in report
+    assert "- Dio: error: no such folder" in report
+
+
+def test_an_unreadable_folder_marks_that_artist_and_the_run_goes_on(
+    tmp_path: Path,
+) -> None:
+    def tags(path: Path) -> Tags | None:
+        if "Dio" in path.parts:
+            raise OSError("share dropped")
+        return isis_tags(path)
+
+    code, beets = batch_all(tmp_path, BatchRun(), tag_reader=tags)
+
+    assert code == 1
+    report = (beets / "logs" / "last-batch-all-report.md").read_text()
+    assert "- Dio: OSError: share dropped" in report
+    assert "### Isis" in report
+
+
+def test_an_interrupted_batch_all_is_logged_as_a_failure(tmp_path: Path) -> None:
+    def tags(path: Path) -> Tags | None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        batch_all(tmp_path, BatchRun(), tag_reader=tags)
+
+    lines = (tmp_path / "beets" / "logs" / "musicos-activity.log").read_text()
+    assert lines.splitlines()[-1] == (
+        "2026-10-24 21:30:05 batch-all 20261024-2130-music FAIL KeyboardInterrupt"
     )

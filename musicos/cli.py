@@ -18,6 +18,14 @@ import yaml
 
 from musicos.appledouble import delete_appledouble, find_appledouble
 from musicos.batch import BatchPlan, plan_batch
+from musicos.batchall import (
+    ERROR,
+    ArtistPlan,
+    gib,
+    plan_to_json,
+    render_batch_all_report,
+    status_counts,
+)
 from musicos.candidates import list_candidates, record_candidates, status_of
 from musicos.changelog import (
     CHANGES_LOG,
@@ -50,6 +58,7 @@ from musicos.gaps import activity_line as gaps_activity_line
 from musicos.gaps import export_albums, find_gaps
 from musicos.gaps import render_report as render_gaps_report
 from musicos.ingest import (
+    AUDIO_SUFFIXES,
     batch_items,
     dry_run_command,
     entry_folders,
@@ -86,10 +95,12 @@ from musicos.split import (
     SplitError,
     check_one_share,
     cue_track_count,
+    files_with_suffix,
     read_cue,
     scan,
     split_rip,
 )
+from musicos.text import printable
 from musicos.trace import Clock, Trace
 
 # Settings kept out of the repo and out of shell history, such as PLEX_TOKEN.
@@ -408,6 +419,98 @@ def batch_command(
     if code:
         trace.fail(SUMMARY_FAILED)
     return code
+
+
+def plan_artist(
+    folder: Path,
+    held: set[str],
+    read: TagReader,
+    candidates_log: Path,
+    when: datetime,
+    run: Run,
+) -> ArtistPlan:
+    """The `batch` plan of one artist folder, and what beets would import for it.
+    A failure stays with this artist."""
+    try:
+        already, plan = plan_folder(folder, held, read, candidates_log, when)
+        artist = ArtistPlan(folder, already, plan)
+        if plan.kept:
+            out = run(dry_run_command([r.folder for r in plan.kept], incremental=True))
+            if out.code != 0:
+                artist.error = first_error(out)
+            # beets prints the --pretend list to stderr; a stream merges it into stdout
+            lines = (out.stdout or out.stderr).splitlines()
+            artist.pretend = [line for line in lines if line.strip()]
+        return artist
+    except Exception as exc:  # noqa: BLE001 - one artist must not stop the others
+        return ArtistPlan(folder, error=f"{type(exc).__name__}: {exc}")
+
+
+def batch_all_command(
+    env: Mapping[str, str],
+    args: argparse.Namespace,
+    now: Clock,
+    read: TagReader,
+    run: Run,
+    stream: Stream | None = None,
+) -> int:
+    root: Path = args.root.resolve()
+    if not root_ok(root, run):
+        return 1
+    try:
+        held = held_folders(run)
+    except RuntimeError as exc:
+        print(f"FAIL beets: {exc}")
+        return 1
+    logs = logs_dir(env)
+    logs.mkdir(exist_ok=True)
+    batch_id = make_batch_id(now(), root)
+    log = progress_log(logs, batch_id, "batch-all")
+    candidates_log = logs / "deletion-candidates.jsonl"
+    pretend = followed(run, stream, log)
+    folders = [p for p in sorted(root.iterdir()) if p.is_dir() and p.name[0] != "."]
+    loose = files_with_suffix(root, *AUDIO_SUFFIXES)
+    trace = Trace(logs, now, "batch-all", batch_id)
+    trace.start(f"{len(folders)} artists")
+    if stream:
+        print(f"following: {log}")
+    artists: list[ArtistPlan] = []
+    with trace.guard():
+        for n, folder in enumerate(folders, 1):
+            artist = plan_artist(folder, held, read, candidates_log, now(), pretend)
+            artists.append(artist)
+            line = (
+                f"{n}/{len(folders)} {printable(artist.name)}: {artist.status}, "
+                f"{len(artist.plan.kept)} to import, {gib(artist.plan.size)}"
+            )
+            if artist.error:
+                line += f" ({printable(artist.error)})"
+            with log.open("a", encoding="utf-8") as out_log:
+                out_log.write(line + "\n")
+            print(line)
+        when = now()
+        report = render_batch_all_report(
+            artists,
+            root,
+            when,
+            loose,
+            lambda folder: user_command(
+                env, ["musicos", "batch", str(folder), "--apply"]
+            ),
+        )
+        (logs / "last-batch-all-report.md").write_text(report)
+        (logs / "last-batch-all-plan.json").write_text(
+            json.dumps(plan_to_json(artists, root, when), indent=2, ensure_ascii=False)
+        )
+    counts = status_counts(artists)
+    trace.done(counts)
+    print(f"{len(artists)} artists: {counts}")
+    print(f"report: {logs / 'last-batch-all-report.md'}")
+    print(f"plan: {logs / 'last-batch-all-plan.json'}")
+    failed = sum(a.status == ERROR for a in artists)
+    if failed:
+        print(f"FAIL batch-all: {failed} artists had errors, see the report")
+    return 1 if failed else 0
 
 
 def show_log(env: Mapping[str, str], args: argparse.Namespace) -> int:
@@ -790,6 +893,10 @@ def main(
     batch_parser.add_argument(
         "--no-plex-refresh", action="store_true", help="do not rescan Plex afterwards"
     )
+    batch_all_parser = commands.add_parser(
+        "batch-all", help="preview the batch of every artist folder (imports nothing)"
+    )
+    batch_all_parser.add_argument("root", type=Path, help="the music folder")
     summary_parser = commands.add_parser("summary", help="report on an import batch")
     summary_parser.add_argument("batch")
     summary_parser.add_argument(
@@ -882,6 +989,8 @@ def main(
         )
     if args.command == "batch":
         return batch_command(env, args, now, tag_reader, run, http, stream)
+    if args.command == "batch-all":
+        return batch_all_command(env, args, now, tag_reader, run, stream)
     if args.command == "split":
         return split(env, run, now, args, which, stream)
     if args.command == "summary":
