@@ -552,3 +552,20 @@ def test_read_tags_replaces_control_characters_in_names(tmp_path: Path) -> None:
 
     assert tags is not None
     assert tags.album == "Oce?[2Janic"
+
+
+def test_audio_folders_fails_when_the_root_is_gone(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        audio_folders(tmp_path / "gone")
+
+
+def test_audio_folders_fails_when_a_folder_cannot_be_listed(tmp_path: Path) -> None:
+    album = tmp_path / "Isis" / "Oceanic"
+    album.mkdir(parents=True)
+    (album / "01.flac").write_bytes(b"x")
+    album.parent.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            audio_folders(tmp_path)
+    finally:
+        album.parent.chmod(0o755)

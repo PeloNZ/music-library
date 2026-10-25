@@ -55,11 +55,17 @@ def _audio_files(folder: Path) -> list[Path]:
     return files_with_suffix(folder, *AUDIO_SUFFIXES)
 
 
+def _fail(error: OSError) -> None:
+    raise error
+
+
 def audio_folders(root: Path) -> list[Path]:
-    """Every folder with audio files directly inside, in path order."""
+    """Every folder with audio files directly inside, in path order. A folder
+    that cannot be listed, such as one on a share that dropped, raises OSError:
+    a partial list would pass for a complete one."""
     return sorted(
         Path(folder)
-        for folder, _, _ in os.walk(root, followlinks=False)
+        for folder, _, _ in os.walk(root, followlinks=False, onerror=_fail)
         if _audio_files(Path(folder))
     )
 
