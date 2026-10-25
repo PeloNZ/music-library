@@ -26,6 +26,10 @@ For an artist folder with several albums, run `uv run musicos batch <artist-fold
 - Without `--apply` it only previews. With `--apply` it imports unattended, rescans Plex and runs `summary`. Tell the user to follow the import with `tail -f beetsdir/logs/import-<batch>.out`. The command prints the log path as `following: <path>` before the import starts.
 - `summary` prints one `beet import` command for the albums beets skipped. The user runs it in their own terminal and answers the prompts.
 
+## Many artists: use `batch-all`
+
+`uv run musicos batch-all <music-folder>` previews `batch` for every artist folder and imports nothing. It writes `beetsdir/logs/last-batch-all-report.md` and `last-batch-all-plan.json`. Tell the user to follow it with `tail -f beetsdir/logs/batch-all-<id>.out`. The command prints the log path as `following: <path>`. Read the report to the user: the artists per status, the copy size, and each `needs you` artist. The user runs `batch --apply` for each `ready` artist. Never run `--apply` for all artists at once.
+
 ## Choose a mode with the user
 
 - **Assisted (default).** The user runs the printed command in their own terminal. beets' match prompts need a terminal and do not work through Claude's shell. Then run `uv run musicos summary <batch>`.
